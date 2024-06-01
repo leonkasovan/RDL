@@ -295,8 +295,8 @@ curl_off_t downloadedSize = 0;
 std::string downloadFilename;
 CURL* g_curl = NULL;
 struct curl_slist *headers = NULL;
-bool scrapeDone = true;
-std::string scrapeString;
+int scrapeStatus = 0;   // 0 = done 1 = step 1 dst
+std::string scrapeString, scrapeString2;
 
 std::string decodeUrl(const std::string& encodedUrl) {
     std::ostringstream decoded;
@@ -366,7 +366,7 @@ std::string httpRequestAsString(CURL* curl, const std::string& source_url) {
     std::string content = "";
     // CURLcode res;
 
-    printf("httpRequestAsString\nURL=%s\n", source_url.c_str());
+    // printf("httpRequestAsString\nURL=%s\n", source_url.c_str());
     curl_easy_setopt(curl, CURLOPT_URL, source_url.c_str());
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, false);
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1);
@@ -570,6 +570,7 @@ void scrapeThreat(const std::string& source_url,const std::string& system){
     curl = curl_easy_init();
     if (!curl) return;
     file_size = urlFilesize(curl, source_url.c_str());
+    {std::lock_guard<std::mutex> lock(downloadMutex_1); scrapeStatus = 2;}
     file_name = getFileName(source_url);
     printf("Scraping Filename=%s Filesize=%ld\n", file_name.c_str(), file_size);
     if (file_size>0){
@@ -580,17 +581,27 @@ void scrapeThreat(const std::string& source_url,const std::string& system){
     scrape_url.append(file_name);
     scrape_url.append("&systemeid=");
     scrape_url.append(std::to_string(scrapeId[system]));
-    std::cout << "Scrape=" << scrape_url << std::endl;
+    // std::cout << "Scrape=" << scrape_url << std::endl;
     res = httpRequestAsString(curl, scrape_url);
+    {std::lock_guard<std::mutex> lock(downloadMutex_1); scrapeStatus = 3;}
     // printf("reslength=%ld\n", res.length());
     if (res.compare(0, 6, "Erreur") == 0) {
         puts(res.c_str());
         curl_easy_cleanup(curl);
         curl_global_cleanup();
         std::lock_guard<std::mutex> lock(downloadMutex_1);
-        scrapeDone = true;
+        scrapeStatus = 0;
         scrapeString = "ERROR:\nSelected rom isn't supported for scraping.\nProcess can't be completed\n";
         return;
+    }
+
+    // Save scrape response to json file
+    {
+        std::ofstream outFile(file_name+".json");
+        if (outFile) {
+            outFile << res;
+        }
+        outFile.close();
     }
     json jsonData = json::parse(res);
     // std::cout << "URL1=" << jsonData["response"]["jeu"]["medias"][1]["url"] << std::endl;
@@ -617,22 +628,37 @@ void scrapeThreat(const std::string& source_url,const std::string& system){
 
     {
         std::lock_guard<std::mutex> lock(downloadMutex_1);
-        scrapeDone = true;
+        scrapeStatus = 0;
         scrapeString.append("Genres:");
         for (const auto& genre : jsonData["response"]["jeu"]["genres"]) {
             scrapeString.append(" ");
             scrapeString.append(genre["noms"][0]["text"]);
         }
         if (!jsonData["response"]["jeu"]["dates"][0]["text"].empty()){
-            scrapeString.append("\nYear: ");
+            scrapeString.append("\nRelease: ");
             scrapeString.append(jsonData["response"]["jeu"]["dates"][0]["text"]);
+        }
+        if (!jsonData["response"]["jeu"]["systeme"]["text"].empty()){
+            scrapeString.append("\nSystem: ");
+            scrapeString.append(jsonData["response"]["jeu"]["systeme"]["text"]);
+        }
+        if (!jsonData["response"]["jeu"]["joueurs"]["text"].empty()){
+            scrapeString.append("\nPlayer: ");
+            scrapeString.append(jsonData["response"]["jeu"]["joueurs"]["text"]);
+        }
+        if (!jsonData["response"]["jeu"]["developpeur"]["text"].empty()){
+            scrapeString.append("\nDeveloper: ");
+            scrapeString.append(jsonData["response"]["jeu"]["developpeur"]["text"]);
+        }
+        if (!jsonData["response"]["jeu"]["editeur"]["text"].empty()){
+            scrapeString.append("\nPublisher: ");
+            scrapeString.append(jsonData["response"]["jeu"]["editeur"]["text"]);
         }
         if (!jsonData["response"]["jeu"]["resolution"].empty()){
             scrapeString.append("\nResolution: ");
             scrapeString.append(jsonData["response"]["jeu"]["resolution"]);
         }
-        scrapeString.append("\n");
-        scrapeString.append(jsonData["response"]["jeu"]["synopsis"][0]["text"]);
+        scrapeString2.append(jsonData["response"]["jeu"]["synopsis"][0]["text"]);
     }
 }
 
@@ -858,8 +884,9 @@ int main(int, char**)
                         }
                         ImGui::SameLine();
                         if (ImGui::SmallButton("..")) {
-                            scrapeDone = false;
+                            scrapeStatus = 1;
                             scrapeString = "";
+                            scrapeString2 = "";
                             // scrapeString.append("\nFile: " + std::string(ROMS_PATH) + "/" + res_item.system + "/" + getFileName(decodeUrl(res_item.url)));
                             // std::cout << httpRequestAsString(g_curl, res_item.url.c_str());
                             // std::cout << httpRequestAsString(g_curl, "https://api.screenscraper.fr/api2/ssuserInfos.php?devid=xxx&devpassword=yyy&softname=zzz&output=xml&ssid=leonkasovan&sspassword=rikadanR1");
@@ -895,7 +922,7 @@ int main(int, char**)
                             ImGui::EndPopup();
                         }
                         if (ImGui::BeginPopupModal("ViewScrape")) {
-                            if (scrapeDone && !image_loaded && (scrapeString.compare(0, 3, "ERR") != 0)){
+                            if ((scrapeStatus == 0) && !image_loaded && (scrapeString.compare(0, 3, "ERR") != 0)){
                                 if (!LoadTextureFromFile((getFileName(decodeUrl(res_item.url))+".1.ss.png").c_str(), &my_texture, my_image_width, my_image_height, renderer)){
                                     printf("Error: LoadTextureFromFile\n");
                                     image_loaded = false;
@@ -907,13 +934,22 @@ int main(int, char**)
                             }
 
                             ImGui::Text("%s (%s)", res_item.title.c_str(), res_item.system.c_str());
+                            ImGui::Separator();
                             if (image_loaded) {
                                 ImGui::Image((void*) my_texture, ImVec2((my_image_width * 200) / my_image_height, 200));
+                                ImGui::SameLine();
                             }
-                            if (scrapeDone)
+                            if (scrapeStatus == 0) {
                                 ImGui::TextWrapped(scrapeString.c_str());
-                            else
-                                ImGui::Text("\nScraping...\nPlease wait.");
+                                ImGui::Separator();
+                                ImGui::TextWrapped(scrapeString2.c_str());
+                            } else if (scrapeStatus == 1) {
+                                ImGui::Text("\nScraping rom size...\nPlease wait.");
+                            } else if (scrapeStatus == 2) {
+                                ImGui::Text("\nScraping rom info...\nPlease wait.");
+                            } else if (scrapeStatus == 3) {
+                                ImGui::Text("\nDownloading media (screenshot)...\nPlease wait.");
+                            }
                             ImGui::Separator();
                             if (ImGui::Button("Close")) {
                                 ImGui::CloseCurrentPopup();
