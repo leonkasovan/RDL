@@ -194,7 +194,8 @@ char *my_strtok(char *str, char delimiter) {
 }
 
 #define ROMS_PATH "/home/deck/Emulation/roms"
-#define DATA_PATH "/home/deck/Projects/imgui/examples/roms_downloader"
+// #define DATA_PATH "/home/deck/Projects/imgui/examples/roms_downloader"
+#define DATA_PATH "."
 
 struct URLSystem {
     std::string url;
@@ -295,6 +296,7 @@ std::string downloadFilename;
 CURL* g_curl = NULL;
 struct curl_slist *headers = NULL;
 bool scrapeDone = true;
+std::string scrapeString;
 
 std::string decodeUrl(const std::string& encodedUrl) {
     std::ostringstream decoded;
@@ -389,7 +391,7 @@ size_t header_callback(char *buffer, size_t size, size_t nitems, void *userdata)
     // Check if the header contains "Content-Length"
     if (strncasecmp(buffer, "Content-Length:", 15) == 0) {
         // Parse the file size from the header
-        printf("strncasecmp:\n%s", buffer);
+        // printf("strncasecmp:\n%s", buffer);
         *file_size = strtoll(buffer + 15, NULL, 10);
     }
     return numbytes;
@@ -432,8 +434,8 @@ CURLcode httpRequest(CURL* curl, const std::string& source_url,const std::string
     std::ofstream outFile;
     std::int64_t fileSize;
 
-    printf("source_url: %s\n",source_url.c_str());
-    printf("target_path: %s\n", target_path.c_str());
+    // printf("source_url: %s\n",source_url.c_str());
+    // printf("target_path: %s\n", target_path.c_str());
 
     // Check file size
     std::ifstream inFile(target_path, std::ios::binary | std::ios::ate);
@@ -447,11 +449,11 @@ CURLcode httpRequest(CURL* curl, const std::string& source_url,const std::string
     if (fileSize == -1){
         // Open new file for writing
         outFile.open(target_path, std::ios::binary);
-        printf("Create new target_path\n");
+        // printf("Create new target_path\n");
     }else{
         // Open a file for append
         outFile.open(target_path, std::ios::binary | std::ios::app);
-        printf("Open target_path and continue from %ld\n", fileSize);
+        // printf("Open target_path and continue from %ld\n", fileSize);
     }
     if (!outFile) {
         std::cerr << "Error: Unable to open file " << target_path << std::endl;
@@ -580,31 +582,57 @@ void scrapeThreat(const std::string& source_url,const std::string& system){
     scrape_url.append(std::to_string(scrapeId[system]));
     std::cout << "Scrape=" << scrape_url << std::endl;
     res = httpRequestAsString(curl, scrape_url);
-    printf("reslength=%ld\n", res.length());
+    // printf("reslength=%ld\n", res.length());
     if (res.compare(0, 6, "Erreur") == 0) {
-        puts(res.c_str());    
+        puts(res.c_str());
         curl_easy_cleanup(curl);
         curl_global_cleanup();
+        std::lock_guard<std::mutex> lock(downloadMutex_1);
+        scrapeDone = true;
+        scrapeString = "ERROR:\nSelected rom isn't supported for scraping.\nProcess can't be completed\n";
         return;
     }
     json jsonData = json::parse(res);
-    std::cout << "URL1=" << jsonData["response"]["jeu"]["medias"][1]["url"] << std::endl;
-    std::cout << "URL1=" << jsonData["response"]["jeu"]["medias"][0]["url"] << std::endl;
-    std::cout << "Synopsis=" << jsonData["response"]["jeu"]["synopsis"][0]["text"] << std::endl;
-    std::cout << "dates=" << jsonData["response"]["jeu"]["dates"][0]["text"] << std::endl;
-    std::cout << "resolution=" << jsonData["response"]["jeu"]["resolution"] << std::endl;
-    std::cout << "\nGenres:" << std::endl;
-    for (const auto& genre : jsonData["response"]["jeu"]["genres"]) {
-        std::cout << genre["noms"][0]["text"] << std::endl;
+    // std::cout << "URL1=" << jsonData["response"]["jeu"]["medias"][1]["url"] << std::endl;
+    // std::cout << "URL1=" << jsonData["response"]["jeu"]["medias"][0]["url"] << std::endl;
+    // std::cout << "Synopsis=" << jsonData["response"]["jeu"]["synopsis"][0]["text"] << std::endl;
+    // std::cout << "dates=" << jsonData["response"]["jeu"]["dates"][0]["text"] << std::endl;
+    // std::cout << "resolution=" << jsonData["response"]["jeu"]["resolution"] << std::endl;
+    // std::cout << "\nGenres:" << std::endl;
+    // httpRequest(curl, jsonData["response"]["jeu"]["medias"][0]["url"], decodeUrl(file_name)+".title.png");
+    // httpRequest(curl, jsonData["response"]["jeu"]["medias"][1]["url"], decodeUrl(file_name)+".ss.png");
+    // int ss_no = 1;
+    for (const auto& media : jsonData["response"]["jeu"]["medias"]) {
+        if (media["type"] == "ss"){
+            // httpRequest(curl, media["url"], decodeUrl(file_name)+"."+std::to_string(ss_no)+".ss.png");
+            httpRequest(curl, media["url"], decodeUrl(file_name)+".1.ss.png");
+            break;
+            // ss_no++;
+        }
+        // scrapeString.append(" ");
+        // scrapeString.append(media["type"][0]["text"]);
     }
-    httpRequest(curl, jsonData["response"]["jeu"]["medias"][0]["url"], decodeUrl(file_name)+".title.png");
-    httpRequest(curl, jsonData["response"]["jeu"]["medias"][1]["url"], decodeUrl(file_name)+".ss.png");
     curl_easy_cleanup(curl);
     curl_global_cleanup();
 
     {
         std::lock_guard<std::mutex> lock(downloadMutex_1);
         scrapeDone = true;
+        scrapeString.append("Genres:");
+        for (const auto& genre : jsonData["response"]["jeu"]["genres"]) {
+            scrapeString.append(" ");
+            scrapeString.append(genre["noms"][0]["text"]);
+        }
+        if (!jsonData["response"]["jeu"]["dates"][0]["text"].empty()){
+            scrapeString.append("\nYear: ");
+            scrapeString.append(jsonData["response"]["jeu"]["dates"][0]["text"]);
+        }
+        if (!jsonData["response"]["jeu"]["resolution"].empty()){
+            scrapeString.append("\nResolution: ");
+            scrapeString.append(jsonData["response"]["jeu"]["resolution"]);
+        }
+        scrapeString.append("\n");
+        scrapeString.append(jsonData["response"]["jeu"]["synopsis"][0]["text"]);
     }
 }
 
@@ -781,9 +809,9 @@ int main(int, char**)
                 ImGuiTableFlags flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable;
                 ImVec2 outer_size = ImVec2(0.0f, 0.0f);
                 ImGui::Text("Found = %d", n_found);
-                if (n_found > 15) {
+                if (n_found > 17) {
                     flags = flags | ImGuiTableFlags_ScrollY;
-                    outer_size = ImVec2(0.0f, ImGui::GetTextLineHeightWithSpacing() * 15);
+                    outer_size = ImVec2(0.0f, ImGui::GetTextLineHeightWithSpacing() * 17);
                 }
                 if (ImGui::BeginTable("Result_Table", 3, flags, outer_size)) {
                     int row = 0;
@@ -831,12 +859,13 @@ int main(int, char**)
                         ImGui::SameLine();
                         if (ImGui::SmallButton("..")) {
                             scrapeDone = false;
+                            scrapeString = "";
+                            // scrapeString.append("\nFile: " + std::string(ROMS_PATH) + "/" + res_item.system + "/" + getFileName(decodeUrl(res_item.url)));
                             // std::cout << httpRequestAsString(g_curl, res_item.url.c_str());
                             // std::cout << httpRequestAsString(g_curl, "https://api.screenscraper.fr/api2/ssuserInfos.php?devid=xxx&devpassword=yyy&softname=zzz&output=xml&ssid=leonkasovan&sspassword=rikadanR1");
                             std::thread thread_2(scrapeThreat, res_item.url, res_item.system);
                             thread_2.detach();
                             ImGui::OpenPopup("ViewScrape");
-                            dest_path = std::string(ROMS_PATH) + "/" + res_item.system + "/" + getFileName(decodeUrl(res_item.url));
                         }
                         if (ImGui::BeginPopupModal("Resume_download", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
                             ImGui::Text("%s already exists.\nResume download?", dest_path.c_str());
@@ -865,23 +894,30 @@ int main(int, char**)
                             }
                             ImGui::EndPopup();
                         }
-                        if (ImGui::BeginPopupModal("ViewScrape", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
-                            if (scrapeDone){
-                                if (!LoadTextureFromFile((getFileName(decodeUrl(res_item.url))+".ss.png").c_str(), &my_texture, my_image_width, my_image_height, renderer)){
+                        if (ImGui::BeginPopupModal("ViewScrape")) {
+                            if (scrapeDone && !image_loaded && (scrapeString.compare(0, 3, "ERR") != 0)){
+                                if (!LoadTextureFromFile((getFileName(decodeUrl(res_item.url))+".1.ss.png").c_str(), &my_texture, my_image_width, my_image_height, renderer)){
                                     printf("Error: LoadTextureFromFile\n");
-                                    return -1;
+                                    image_loaded = false;
+                                    // return -1;
                                 }else{
                                     image_loaded = true;
+                                    // printf("This is should be loaded once\n");
                                 }
                             }
 
-                            ImGui::Text("Source URL: %s", res_item.url.c_str());
-                            ImGui::Text("Destination Path: %s", dest_path.c_str());
-                            if (image_loaded) ImGui::Image((void*) my_texture, ImVec2(my_image_width, my_image_height));
+                            ImGui::Text("%s (%s)", res_item.title.c_str(), res_item.system.c_str());
+                            if (image_loaded) {
+                                ImGui::Image((void*) my_texture, ImVec2((my_image_width * 200) / my_image_height, 200));
+                            }
+                            if (scrapeDone)
+                                ImGui::TextWrapped(scrapeString.c_str());
+                            else
+                                ImGui::Text("\nScraping...\nPlease wait.");
                             ImGui::Separator();
                             if (ImGui::Button("Close")) {
                                 ImGui::CloseCurrentPopup();
-                                SDL_DestroyTexture(my_texture);
+                                if (image_loaded) SDL_DestroyTexture(my_texture);
                                 image_loaded = false;
                             }
                             ImGui::EndPopup();
@@ -958,7 +994,7 @@ int main(int, char**)
     ImGui_ImplSDL2_Shutdown();
     ImGui::DestroyContext();
 
-    SDL_DestroyTexture(my_texture);
+    // SDL_DestroyTexture(my_texture);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
     SDL_Quit();
