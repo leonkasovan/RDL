@@ -1,0 +1,5 @@
+*.o
+*.csv
+*.ini
+*.png
+roms_downloader
