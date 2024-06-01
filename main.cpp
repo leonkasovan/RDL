@@ -322,6 +322,24 @@ std::string decodeUrl(const std::string& encodedUrl) {
     return decoded.str();
 }
 
+std::string encodeUrl(const std::string &value) {
+    std::ostringstream escaped;
+    escaped.fill('0');
+    escaped << std::hex;
+
+    for (char c : value) {
+        // Keep alphanumeric and other accepted characters intact
+        if (isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '_' || c == '.' || c == '~') {
+            escaped << c;
+        } else {
+            // Any other characters are percent-encoded
+            escaped << '%' << std::setw(2) << static_cast<int>(static_cast<unsigned char>(c));
+        }
+    }
+
+    return escaped.str();
+}
+
 std::string getFileName(const std::string& url) {
     // Find the last slash in the URL
     std::size_t lastSlashPos = url.find_last_of('/');
@@ -333,6 +351,22 @@ std::string getFileName(const std::string& url) {
     
     // If no slash is found, return the whole URL (unlikely case for a valid URL)
     return url;
+}
+
+std::string getFileNameWithoutExtension(const std::string& filePath) {
+    // Find the last occurrence of the path separator
+    size_t lastSlash = filePath.find_last_of("/\\");
+    // Extract the filename from the filePath
+    std::string fileName = (lastSlash == std::string::npos) ? filePath : filePath.substr(lastSlash + 1);
+
+    // Find the last occurrence of the dot to find the extension
+    size_t lastDot = fileName.find_last_of('.');
+    // Extract the filename without extension
+    if (lastDot == std::string::npos) {
+        return fileName; // No extension found
+    } else {
+        return fileName.substr(0, lastDot);
+    }
 }
 
 // Write callback to write received data to a file
@@ -366,7 +400,7 @@ std::string httpRequestAsString(CURL* curl, const std::string& source_url) {
     std::string content = "";
     // CURLcode res;
 
-    // printf("httpRequestAsString\nURL=%s\n", source_url.c_str());
+    printf("\nURL=%s\n", source_url.c_str());
     curl_easy_setopt(curl, CURLOPT_URL, source_url.c_str());
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, false);
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1);
@@ -571,14 +605,18 @@ void scrapeThreat(const std::string& source_url,const std::string& system){
     if (!curl) return;
     file_size = urlFilesize(curl, source_url.c_str());
     {std::lock_guard<std::mutex> lock(downloadMutex_1); scrapeStatus = 2;}
-    file_name = getFileName(source_url);
-    printf("Scraping Filename=%s Filesize=%ld\n", file_name.c_str(), file_size);
+    file_name = getFileName(decodeUrl(source_url));
+    // printf("Scraping Filename=%s Filesize=%ld\n", file_name.c_str(), file_size);
     if (file_size>0){
         scrape_url.append("&romtaille=");
         scrape_url.append(std::to_string(file_size));
+        scrape_url.append("&romnom=");
+        scrape_url.append(encodeUrl(file_name));
+    }else{
+        scrape_url = "https://api.screenscraper.fr/api2/jeuRecherche.php?output=json&devid=recalbox&devpassword=C3KbyjX8PKsUgm2tu53y&softname=Emulationstation-Recalbox-9.1&ssid=test&sspassword=test";
+        scrape_url.append("&recherche=");
+        scrape_url.append(encodeUrl(getFileNameWithoutExtension(decodeUrl(source_url))));
     }
-    scrape_url.append("&romnom=");
-    scrape_url.append(file_name);
     scrape_url.append("&systemeid=");
     scrape_url.append(std::to_string(scrapeId[system]));
     // std::cout << "Scrape=" << scrape_url << std::endl;
@@ -613,7 +651,7 @@ void scrapeThreat(const std::string& source_url,const std::string& system){
     // httpRequest(curl, jsonData["response"]["jeu"]["medias"][0]["url"], decodeUrl(file_name)+".title.png");
     // httpRequest(curl, jsonData["response"]["jeu"]["medias"][1]["url"], decodeUrl(file_name)+".ss.png");
     // int ss_no = 1;
-    for (const auto& media : jsonData["response"]["jeu"]["medias"]) {
+    for (const auto& media : file_size>0?jsonData["response"]["jeu"]["medias"]:jsonData["response"]["jeux"][0]["medias"]) {
         if (media["type"] == "ss"){
             // httpRequest(curl, media["url"], decodeUrl(file_name)+"."+std::to_string(ss_no)+".ss.png");
             httpRequest(curl, media["url"], decodeUrl(file_name)+".1.ss.png");
@@ -630,35 +668,35 @@ void scrapeThreat(const std::string& source_url,const std::string& system){
         std::lock_guard<std::mutex> lock(downloadMutex_1);
         scrapeStatus = 0;
         scrapeString.append("Genres:");
-        for (const auto& genre : jsonData["response"]["jeu"]["genres"]) {
+        for (const auto& genre : file_size>0?jsonData["response"]["jeu"]["genres"]:jsonData["response"]["jeux"][0]["genres"]) {
             scrapeString.append(" ");
             scrapeString.append(genre["noms"][0]["text"]);
         }
-        if (!jsonData["response"]["jeu"]["dates"][0]["text"].empty()){
+        if (!(file_size>0?jsonData["response"]["jeu"]["dates"][0]["text"]:jsonData["response"]["jeux"][0]["dates"][0]["text"]).empty()){
             scrapeString.append("\nRelease: ");
-            scrapeString.append(jsonData["response"]["jeu"]["dates"][0]["text"]);
+            scrapeString.append(file_size>0?jsonData["response"]["jeu"]["dates"][0]["text"]:jsonData["response"]["jeux"][0]["dates"][0]["text"]);
         }
-        if (!jsonData["response"]["jeu"]["systeme"]["text"].empty()){
+        if (!(file_size>0?jsonData["response"]["jeu"]["systeme"]["text"]:jsonData["response"]["jeux"][0]["systeme"]["text"]).empty()){
             scrapeString.append("\nSystem: ");
-            scrapeString.append(jsonData["response"]["jeu"]["systeme"]["text"]);
+            scrapeString.append(file_size>0?jsonData["response"]["jeu"]["systeme"]["text"]:jsonData["response"]["jeux"][0]["systeme"]["text"]);
         }
-        if (!jsonData["response"]["jeu"]["joueurs"]["text"].empty()){
+        if (!(file_size>0?jsonData["response"]["jeu"]["joueurs"]["text"]:jsonData["response"]["jeux"][0]["joueurs"]["text"]).empty()){
             scrapeString.append("\nPlayer: ");
-            scrapeString.append(jsonData["response"]["jeu"]["joueurs"]["text"]);
+            scrapeString.append(file_size>0?jsonData["response"]["jeu"]["joueurs"]["text"]:jsonData["response"]["jeux"][0]["joueurs"]["text"]);
         }
-        if (!jsonData["response"]["jeu"]["developpeur"]["text"].empty()){
+        if (!(file_size>0?jsonData["response"]["jeu"]["developpeur"]["text"]:jsonData["response"]["jeux"][0]["developpeur"]["text"]).empty()){
             scrapeString.append("\nDeveloper: ");
-            scrapeString.append(jsonData["response"]["jeu"]["developpeur"]["text"]);
+            scrapeString.append(file_size>0?jsonData["response"]["jeu"]["developpeur"]["text"]:jsonData["response"]["jeux"][0]["developpeur"]["text"]);
         }
-        if (!jsonData["response"]["jeu"]["editeur"]["text"].empty()){
+        if (!(file_size>0?jsonData["response"]["jeu"]["editeur"]["text"]:jsonData["response"]["jeux"][0]["editeur"]["text"]).empty()){
             scrapeString.append("\nPublisher: ");
-            scrapeString.append(jsonData["response"]["jeu"]["editeur"]["text"]);
+            scrapeString.append(file_size>0?jsonData["response"]["jeu"]["editeur"]["text"]:jsonData["response"]["jeux"][0]["editeur"]["text"]);
         }
-        if (!jsonData["response"]["jeu"]["resolution"].empty()){
+        if (!(file_size>0?jsonData["response"]["jeu"]["resolution"]:jsonData["response"]["jeux"][0]["resolution"]).empty()){
             scrapeString.append("\nResolution: ");
-            scrapeString.append(jsonData["response"]["jeu"]["resolution"]);
+            scrapeString.append(file_size>0?jsonData["response"]["jeu"]["resolution"]:jsonData["response"]["jeux"][0]["resolution"]);
         }
-        scrapeString2.append(jsonData["response"]["jeu"]["synopsis"][0]["text"]);
+        scrapeString2.append(file_size>0?jsonData["response"]["jeu"]["synopsis"][0]["text"]:jsonData["response"]["jeux"][0]["synopsis"][0]["text"]);
     }
 }
 
