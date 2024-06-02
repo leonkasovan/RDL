@@ -4,8 +4,11 @@
 // 1. (done) Check target path if exists confirm to continue download or cancel download
 // Note: now if target path if exists, it won't displayed in result
 // 2. (done) Clipping for result
-// 3. Scrape
+// 3. (done) Scrape
 // 4. Build database using lua script
+
+// Fix:
+// - handle when scrape found none
 
 #include "imgui.h"
 #include "imgui_impl_sdl2.h"
@@ -434,6 +437,7 @@ curl_off_t urlFilesize(CURL *curl, const char *url) {
     curl_off_t file_size = -1;
 
     // Set the URL
+    printf("get URL size:\n%s\n",url);
     curl_easy_setopt(curl, CURLOPT_URL, url);
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1);
     curl_easy_setopt(curl, CURLOPT_AUTOREFERER, 1);
@@ -601,7 +605,10 @@ void scrapeThreat(const std::string& source_url,const std::string& system){
     curl_global_init(CURL_GLOBAL_DEFAULT);
     curl = curl_easy_init();
     if (!curl) return;
-    file_size = urlFilesize(curl, source_url.c_str());
+    if (strstr(source_url.c_str(),".zip/") || strstr(source_url.c_str(),".7z/") ){
+        file_size = -1;    
+    }else
+        file_size = urlFilesize(curl, source_url.c_str());
     {std::lock_guard<std::mutex> lock(downloadMutex_1); scrapeStatus = 2;}
     file_name = getFileName(decodeUrl(source_url));
     // printf("Scraping Filename=%s Filesize=%ld\n", file_name.c_str(), file_size);
@@ -640,24 +647,23 @@ void scrapeThreat(const std::string& source_url,const std::string& system){
         outFile.close();
     }
     json jsonData = json::parse(res);
-    // std::cout << "URL1=" << jsonData["response"]["jeu"]["medias"][1]["url"] << std::endl;
-    // std::cout << "URL1=" << jsonData["response"]["jeu"]["medias"][0]["url"] << std::endl;
-    // std::cout << "Synopsis=" << jsonData["response"]["jeu"]["synopsis"][0]["text"] << std::endl;
-    // std::cout << "dates=" << jsonData["response"]["jeu"]["dates"][0]["text"] << std::endl;
-    // std::cout << "resolution=" << jsonData["response"]["jeu"]["resolution"] << std::endl;
-    // std::cout << "\nGenres:" << std::endl;
-    // httpRequest(curl, jsonData["response"]["jeu"]["medias"][0]["url"], decodeUrl(file_name)+".title.png");
-    // httpRequest(curl, jsonData["response"]["jeu"]["medias"][1]["url"], decodeUrl(file_name)+".ss.png");
-    // int ss_no = 1;
+
+    if (file_size<0){
+        // std::array jeux = jsonData["response"]["jeux"];
+        if (jsonData["response"]["jeux"][0].size() == 0) {
+            curl_easy_cleanup(curl);
+            curl_global_cleanup();
+            std::lock_guard<std::mutex> lock(downloadMutex_1);
+            scrapeStatus = 0;
+            scrapeString = "ERROR:\nScrape found NOTHING.\n";
+            return;
+        }
+    }
     for (const auto& media : file_size>0?jsonData["response"]["jeu"]["medias"]:jsonData["response"]["jeux"][0]["medias"]) {
         if (media["type"] == "ss"){
-            // httpRequest(curl, media["url"], decodeUrl(file_name)+"."+std::to_string(ss_no)+".ss.png");
             httpRequest(curl, media["url"], decodeUrl(file_name)+".1.ss.png");
             break;
-            // ss_no++;
         }
-        // scrapeString.append(" ");
-        // scrapeString.append(media["type"][0]["text"]);
     }
     curl_easy_cleanup(curl);
     curl_global_cleanup();
@@ -701,14 +707,6 @@ void scrapeThreat(const std::string& source_url,const std::string& system){
 // Main code
 int main(int, char**)
 {
-    // std::map<std::string, int> scrapeId{{"megadrive",1},{"snes",4}};
-    // scrapeId[genesis]=1;
-    // scrapeId["megadrive"]=1;
-    // scrapeId["snes"]=4;
-    // scrapeId["psx"] = 57;
-    // scrapeId["ps2"]=58;
-    // scrapeId["atomiswave"]=53;
-
     // Setup SDL
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_GAMECONTROLLER) != 0)
     {
@@ -741,11 +739,6 @@ int main(int, char**)
 
     SDL_Texture* my_texture;
     int my_image_width, my_image_height;
-    // bool ret = LoadTextureFromFile("media/MyImage01.jpg", &my_texture, my_image_width, my_image_height, renderer);
-    // if (!ret){
-    //     printf("Error: LoadTextureFromFile\n");
-    //     return -1;
-    // }
 
     // Setup Dear ImGui context
     IMGUI_CHECKVERSION();
@@ -820,7 +813,7 @@ int main(int, char**)
         // 2. Show a simple window that we create ourselves. We use a Begin/End pair to create a named window.
         {
             static bool show_app = true;
-            static char rom_name[1024] = "donkey";
+            static char rom_name[1024] = "adventure";
             const char* systems[] = { "all", "psx", "ps2", "ps3", "psvita", "snes", "nds", "3ds", "wii", "gba", "arcade", "fbneo" };
             static int system_current = 0;
             static char query[1030] = "";
