@@ -63,6 +63,11 @@ endif
 ##---------------------------------------------------------------------
 ## BUILD RULES
 ##---------------------------------------------------------------------
+all: $(EXE)
+	@echo Build complete for $(ECHO_MESSAGE)
+
+system_scrape_id.h: gen_system_scrape_id systemesListe.json
+	./gen_system_scrape_id > system_scrape_id.h
 
 %.o:%.cpp
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
@@ -73,10 +78,13 @@ endif
 %.o:$(IMGUI_DIR)/backends/%.cpp
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
 
-all: $(EXE)
-	@echo Build complete for $(ECHO_MESSAGE)
+gen_system_scrape_id: gen_system_scrape_id.cpp
+	g++ gen_system_scrape_id.cpp -o gen_system_scrape_id
 
-$(EXE): $(OBJS)
+systemesListe.json:
+	wget "https://api.screenscraper.fr/api2/systemesListe.php?output=json&devid=recalbox&devpassword=C3KbyjX8PKsUgm2tu53y&softname=Emulationstation-Recalbox-9.1&ssid=test&sspassword=test" -O systemesListe.json
+	
+$(EXE): system_scrape_id.h $(OBJS)
 	$(CXX) -o $@ $^ $(CXXFLAGS) $(LIBS)
 
 clean:

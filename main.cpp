@@ -35,6 +35,8 @@ using json = nlohmann::json;
 #error This backend requires SDL 2.0.17+ because of SDL_RenderGeometry() function
 #endif
 #define MAX_LINE 2048
+#define ROMS_PATH "/home/deck/Emulation/roms"
+#define DATA_PATH "db"
 
 bool LoadTextureFromFile(const char* filename, SDL_Texture** texture_ptr, int& width, int& height, SDL_Renderer* renderer) {
     int channels;
@@ -192,10 +194,6 @@ char *my_strtok(char *str, char delimiter) {
         return result;
     }
 }
-
-#define ROMS_PATH "/home/deck/Emulation/roms"
-// #define DATA_PATH "/home/deck/Projects/imgui/examples/roms_downloader"
-#define DATA_PATH "."
 
 struct URLSystem {
     std::string url;
@@ -696,7 +694,7 @@ void scrapeThreat(const std::string& source_url,const std::string& system){
             scrapeString.append("\nResolution: ");
             scrapeString.append(file_size>0?jsonData["response"]["jeu"]["resolution"]:jsonData["response"]["jeux"][0]["resolution"]);
         }
-        scrapeString2.append(file_size>0?jsonData["response"]["jeu"]["synopsis"][0]["text"]:jsonData["response"]["jeux"][0]["synopsis"][0]["text"]);
+        scrapeString2.append(file_size>0?jsonData["response"]["jeu"]["synopsis"][0]["text"]:jsonData["response"]["jeux"][0]["synopsis"][1]["text"]);
     }
 }
 
