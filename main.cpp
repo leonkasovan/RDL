@@ -8,7 +8,7 @@
 // 4. Build database using lua script
 
 // Fix:
-// - handle when scrape found none
+// - (done) handle when scrape found none
 
 #include "imgui.h"
 #include "imgui_impl_sdl2.h"
@@ -39,7 +39,8 @@ using json = nlohmann::json;
 #endif
 #define MAX_LINE 2048
 #define ROMS_PATH "/home/deck/Emulation/roms"
-#define DATA_PATH "db"
+#define DB_PATH "db"
+#define SCRAPED_PATH "scraped"
 
 bool LoadTextureFromFile(const char* filename, SDL_Texture** texture_ptr, int& width, int& height, SDL_Renderer* renderer) {
     int channels;
@@ -640,7 +641,7 @@ void scrapeThreat(const std::string& source_url,const std::string& system){
 
     // Save scrape response to json file
     {
-        std::ofstream outFile(file_name+".json");
+        std::ofstream outFile(SCRAPED_PATH "/" + file_name+".json");
         if (outFile) {
             outFile << res;
         }
@@ -661,7 +662,7 @@ void scrapeThreat(const std::string& source_url,const std::string& system){
     }
     for (const auto& media : file_size>0?jsonData["response"]["jeu"]["medias"]:jsonData["response"]["jeux"][0]["medias"]) {
         if (media["type"] == "ss"){
-            httpRequest(curl, media["url"], decodeUrl(file_name)+".1.ss.png");
+            httpRequest(curl, media["url"], SCRAPED_PATH "/" + decodeUrl(file_name)+".1.ss.png");
             break;
         }
     }
@@ -674,7 +675,7 @@ void scrapeThreat(const std::string& source_url,const std::string& system){
         scrapeString.append("Genres:");
         for (const auto& genre : file_size>0?jsonData["response"]["jeu"]["genres"]:jsonData["response"]["jeux"][0]["genres"]) {
             scrapeString.append(" ");
-            scrapeString.append(genre["noms"][0]["text"]);
+            scrapeString.append(genre["noms"][file_size>0?0:1]["text"]);
         }
         if (!(file_size>0?jsonData["response"]["jeu"]["dates"][0]["text"]:jsonData["response"]["jeux"][0]["dates"][0]["text"]).empty()){
             scrapeString.append("\nRelease: ");
@@ -707,6 +708,8 @@ void scrapeThreat(const std::string& source_url,const std::string& system){
 // Main code
 int main(int, char**)
 {
+    // system("mkdir -p scraped");
+    std::filesystem::create_directory("scraped");
     // Setup SDL
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_GAMECONTROLLER) != 0)
     {
@@ -845,13 +848,13 @@ int main(int, char**)
                     strcpy(query, rom_name);
                 }
 
-                dir1 = opendir(DATA_PATH);
+                dir1 = opendir(DB_PATH);
                 if (dir1){
                     lword = split_word(query);
                     entry = readdir(dir1);
                     do {
                         if (strstr(entry->d_name, ".csv")) {
-                            sprintf(fullpath, DATA_PATH"/%s", entry->d_name);
+                            sprintf(fullpath, DB_PATH"/%s", entry->d_name);
                             n_found = SearchCSV(result, fullpath, lword, n_found);
                             // n_found = SearchCSV(result, "/home/deck/Projects/imgui/examples/roms_downloader/cylums_snes_rom_collection.csv", lword, n_found);
                         }
@@ -952,7 +955,7 @@ int main(int, char**)
                         }
                         if (ImGui::BeginPopupModal("ViewScrape")) {
                             if ((scrapeStatus == 0) && !image_loaded && (scrapeString.compare(0, 3, "ERR") != 0)){
-                                if (!LoadTextureFromFile((getFileName(decodeUrl(res_item.url))+".1.ss.png").c_str(), &my_texture, my_image_width, my_image_height, renderer)){
+                                if (!LoadTextureFromFile((SCRAPED_PATH "/" + getFileName(decodeUrl(res_item.url))+".1.ss.png").c_str(), &my_texture, my_image_width, my_image_height, renderer)){
                                     printf("Error: LoadTextureFromFile\n");
                                     image_loaded = false;
                                     // return -1;
