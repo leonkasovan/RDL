@@ -6,6 +6,8 @@
 // 2. (done) Clipping for result
 // 3. (done) Scrape
 // 4. Build database using lua script
+// 5. DB support for nopaystation tsv 
+// 6. (done) Read/Write setting from imgui.ini
 
 // Fix:
 // - (done) handle when scrape found none
@@ -13,8 +15,10 @@
 #include "imgui.h"
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_sdlrenderer2.h"
+#include "imgui_internal.h"
 #include <stdio.h>
 #include <dirent.h>
+#include <sys/stat.h>
 #include <string>
 #include <vector>
 #include <thread>
@@ -38,9 +42,98 @@ using json = nlohmann::json;
 #error This backend requires SDL 2.0.17+ because of SDL_RenderGeometry() function
 #endif
 #define MAX_LINE 2048
-#define ROMS_PATH "/home/deck/Emulation/roms"
 #define DB_PATH "db"
 #define SCRAPED_PATH "scraped"
+#define DEFAULT_VIEW_RESULT_LIMIT 17
+#define DEFAULT_ROMS_PATH_1 "/home/deck/Emulation/roms"
+#define DEFAULT_ROMS_PATH_2 "/storage/roms"
+#define DEFAULT_ROMS_PATH_3 "/userdata/roms"
+#define DEFAULT_ROMS_PATH_4 "/roms"
+#define DEFAULT_ROMS_PATH_5 "/roms2"
+
+struct RDL_Setting {
+    unsigned int view_result_limit;
+    char roms_path[1024];
+};
+
+struct RDL_Setting AppSetting = { 0, "" };
+
+bool isDirectoryExists(const char *path) {
+    struct stat statbuf;
+
+    // Check if path exists
+    if (stat(path, &statbuf) != 0) {
+        return false; // Path does not exist or error occurred
+    }
+
+    // Check if path is a directory
+    return S_ISDIR(statbuf.st_mode);
+}
+
+static void MyAppHandler_ClearAll(ImGuiContext* ctx, ImGuiSettingsHandler*){
+    printf("MyAppHandler_ClearAll:\n");
+}
+static void MyAppHandler_ApplyAll(ImGuiContext* ctx, ImGuiSettingsHandler*){
+    printf("MyAppHandler_ApplyAll:\n");
+
+    if (AppSetting.view_result_limit == 0) AppSetting.view_result_limit = DEFAULT_VIEW_RESULT_LIMIT;
+    if (!AppSetting.roms_path[0]){
+        if (isDirectoryExists(DEFAULT_ROMS_PATH_1))
+            strcpy(AppSetting.roms_path, DEFAULT_ROMS_PATH_1);
+        else if (isDirectoryExists(DEFAULT_ROMS_PATH_2))
+            strcpy(AppSetting.roms_path, DEFAULT_ROMS_PATH_2);
+        else if (isDirectoryExists(DEFAULT_ROMS_PATH_3))
+            strcpy(AppSetting.roms_path, DEFAULT_ROMS_PATH_3);
+        else if (isDirectoryExists(DEFAULT_ROMS_PATH_4))
+            strcpy(AppSetting.roms_path, DEFAULT_ROMS_PATH_4);
+        else{
+            std::filesystem::create_directory("roms");
+            strcpy(AppSetting.roms_path, "roms");
+        }
+    }
+    // printf("ViewResultLimit: %d\n", AppSetting.view_result_limit);
+    // printf("RomsPath: %s\n", AppSetting.roms_path);
+}
+static void* MyAppHandler_ReadOpen(ImGuiContext*, ImGuiSettingsHandler*, const char* name){
+    // printf("MyAppHandler_ReadOpen: %s\n", name);
+    return (void*)&AppSetting;
+}
+static void MyAppHandler_ReadLine(ImGuiContext*, ImGuiSettingsHandler*, void* entry, const char* line){
+    struct RDL_Setting *AppSetting = (struct RDL_Setting *)entry;
+    int i;
+    char s[256];
+    // printf("MyAppHandler_ReadLine: %s\n", line);
+    if (sscanf(line, "ViewResultLimit=%d", &i) == 1) {
+        AppSetting->view_result_limit = i;
+    }
+    if (sscanf(line, "RomsPath=%256s", s) == 1) {
+        strcpy(AppSetting->roms_path, s);
+    }
+}
+static void MyAppHandler_WriteAll(ImGuiContext* ctx, ImGuiSettingsHandler* handler, ImGuiTextBuffer* buf){
+    buf->reserve(buf->size() + 500); // ballpark reserve
+    buf->appendf("[%s][RDL]\n", handler->TypeName);
+    if (AppSetting.view_result_limit){
+        buf->appendf("ViewResultLimit=%d\n", AppSetting.view_result_limit);
+    }
+    if (AppSetting.roms_path[0]){
+        buf->appendf("RomsPath=%s\n", AppSetting.roms_path);
+    }
+    // printf("MyAppHandler_WriteAll: %s\n", buf->c_str());
+}
+
+void initialize_settings_export()
+{
+    ImGuiSettingsHandler ini_handler;
+    ini_handler.TypeName = "MyApp";
+    ini_handler.TypeHash = ImHashStr( "MyApp" );
+    ini_handler.ClearAllFn = MyAppHandler_ClearAll;
+    ini_handler.ApplyAllFn = MyAppHandler_ApplyAll;
+    ini_handler.ReadOpenFn = MyAppHandler_ReadOpen;
+    ini_handler.ReadLineFn = MyAppHandler_ReadLine;
+    ini_handler.WriteAllFn = MyAppHandler_WriteAll;
+    ImGui::AddSettingsHandler( &ini_handler );
+}
 
 bool LoadTextureFromFile(const char* filename, SDL_Texture** texture_ptr, int& width, int& height, SDL_Renderer* renderer) {
     int channels;
@@ -260,7 +353,7 @@ int SearchCSV(std::vector<tSearchResult>& result, const char *csv_fname, char **
         a_desc = my_strtok(NULL, '|');
         
         // Use snprintf to safely concatenate str1 and str2 into target
-        snprintf(target, MAX_LINE, "%s/%s/%s", ROMS_PATH, category, a_name);
+        snprintf(target, MAX_LINE, "%s/%s/%s", AppSetting.roms_path, category, a_name);
         // Ensure null-termination and truncate if overflow
         target[MAX_LINE - 1] = '\0';
 
@@ -744,8 +837,10 @@ int main(int, char**)
     int my_image_width, my_image_height;
 
     // Setup Dear ImGui context
+    // initialize_settings_export();
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    initialize_settings_export();
     ImGuiIO& io = ImGui::GetIO(); (void)io;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
@@ -838,7 +933,7 @@ int main(int, char**)
             if (ImGui::Button("Search")) {
                 DIR *dir1;
                 struct dirent *entry;
-                char fullpath[MAX_LINE];
+                char fullpath[MAX_LINE], *p;
 
                 result.clear();
                 n_found = 0;
@@ -846,6 +941,11 @@ int main(int, char**)
                     snprintf(query, 1030, "%s: %s", systems[system_current], rom_name);
                 }else{
                     strcpy(query, rom_name);
+                }
+                p = query;
+                while (*p){
+                    *p = tolower(*p);
+                    p++;
                 }
 
                 dir1 = opendir(DB_PATH);
@@ -867,9 +967,9 @@ int main(int, char**)
                 ImGuiTableFlags flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable;
                 ImVec2 outer_size = ImVec2(0.0f, 0.0f);
                 ImGui::Text("Found = %d", n_found);
-                if (n_found > 17) {
+                if (n_found > AppSetting.view_result_limit) {
                     flags = flags | ImGuiTableFlags_ScrollY;
-                    outer_size = ImVec2(0.0f, ImGui::GetTextLineHeightWithSpacing() * 17);
+                    outer_size = ImVec2(0.0f, ImGui::GetTextLineHeightWithSpacing() * AppSetting.view_result_limit);
                 }
                 if (ImGui::BeginTable("Result_Table", 3, flags, outer_size)) {
                     int row = 0;
@@ -893,7 +993,7 @@ int main(int, char**)
                         if (ImGui::SmallButton("Get")) {
                             // auto filesize = urlFilesize(g_curl, res_item.url.c_str());
                             // printf("URL filesize = %ld\n", filesize);
-                            dest_path = std::string(ROMS_PATH) + "/" + res_item.system + "/" + getFileName(decodeUrl(res_item.url));
+                            dest_path = std::string(AppSetting.roms_path) + "/" + res_item.system + "/" + getFileName(decodeUrl(res_item.url));
                             if (isFileExists(dest_path.c_str())){
                                 printf("%s already exists.\n", dest_path.c_str());
                                 ImGui::OpenPopup("Resume_download");
@@ -1016,6 +1116,7 @@ int main(int, char**)
 
                 if (downloadDone_1){    // there is no downloading = downloadDone then request in the download queue
                     auto item = downloadQueue.back();
+                    downloadFilename = getFileName(decodeUrl(item.url));
                     {
                     std::lock_guard<std::mutex> lock(downloadMutex_1);
                     downloadDone_1 = false;
