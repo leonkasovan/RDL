@@ -295,18 +295,20 @@ char *my_strtok(char *str, char delimiter) {
 struct URLSystem {
     std::string url;
     std::string system;
+    std::string size;
 
     // Constructor
-    URLSystem(const std::string& u, const std::string& s) : url(u), system(s) {}
+    URLSystem(const std::string& u, const std::string& s, const std::string& sz) : url(u), system(s), size(sz) {}
 };
 
 class tSearchResult {
 public:
-    tSearchResult(const std::string& system, const std::string& title, const std::string& url, const std::string& desc): system(system), title(title), url(url), desc(desc) {}
+    tSearchResult(const std::string& system, const std::string& title, const std::string& url, const std::string& desc, const std::string& size): system(system), title(title), url(url), desc(desc), size(size) {}
     std::string system;
     std::string title;
     std::string url;
     std::string desc;
+    std::string size;
 };
 
 int SearchCSV(std::vector<tSearchResult>& result, const char *csv_fname, char **lword, unsigned int start_no) { 
@@ -314,7 +316,7 @@ int SearchCSV(std::vector<tSearchResult>& result, const char *csv_fname, char **
 	char line[MAX_LINE];
     char target[MAX_LINE];
 	char *category = NULL, *base_url = NULL, *p;
-	char *a_name, *a_title, *a_desc;
+	char *a_name, *a_title, *a_desc, *a_size;
 
 	f = fopen(csv_fname, "r");
 	if (!f) {
@@ -351,6 +353,7 @@ int SearchCSV(std::vector<tSearchResult>& result, const char *csv_fname, char **
 		a_name = my_strtok(line, '|');
 		a_title = my_strtok(NULL, '|');
         a_desc = my_strtok(NULL, '|');
+        a_size = my_strtok(NULL, '|');
         
         // Use snprintf to safely concatenate str1 and str2 into target
         snprintf(target, MAX_LINE, "%s/%s/%s", AppSetting.roms_path, category, a_name);
@@ -362,17 +365,17 @@ int SearchCSV(std::vector<tSearchResult>& result, const char *csv_fname, char **
         if (find_keyword2(a_title, lword)) {
 			start_no++;
 			
-			// remove trailing end-of-line in a_desc
-			p = strrchr(a_desc, '\r'); // windows end of line
+			// remove trailing end-of-line in a_size
+			p = strrchr(a_size, '\r'); // windows end of line
 			if (p) {
 				*p = '\0';	// replace \r to \0
 			}else{
-				p = strrchr(a_desc, '\n');
+				p = strrchr(a_size, '\n');
 				if (p) *p = '\0';	// replace \n to \0
 			}
       
             snprintf(target, MAX_LINE, "%s/%s", base_url, a_name);
-            result.emplace_back(category, a_title, target, a_desc);
+            result.emplace_back(category, a_title, target, a_desc, a_size);
 		}
 	}
 	fclose(f);
@@ -688,10 +691,10 @@ void downloadThreat(const std::string& source_url,const std::string& target_path
 }
 
 // Thread function that scrape based on url
-void scrapeThreat(const std::string& source_url,const std::string& system){
+void scrapeThreat(const std::string& source_url,const std::string& system,const std::string& file_size){
     CURL* curl;
     // CURLcode res;
-    curl_off_t file_size;
+    // curl_off_t file_size;
     std::string res;
     std::string file_name;
     std::string scrape_url = "https://api.screenscraper.fr/api2/jeuInfos.php?output=json&devid=recalbox&devpassword=C3KbyjX8PKsUgm2tu53y&softname=Emulationstation-Recalbox-9.1&ssid=test&sspassword=test&romtype=rom";
@@ -699,16 +702,17 @@ void scrapeThreat(const std::string& source_url,const std::string& system){
     curl_global_init(CURL_GLOBAL_DEFAULT);
     curl = curl_easy_init();
     if (!curl) return;
-    if (strstr(source_url.c_str(),".zip/") || strstr(source_url.c_str(),".7z/") ){
-        file_size = -1;    
-    }else
-        file_size = urlFilesize(curl, source_url.c_str());
+    // if (strstr(source_url.c_str(),".zip/") || strstr(source_url.c_str(),".7z/") ){
+    //     file_size = -1;    
+    // }else
+    //     file_size = urlFilesize(curl, source_url.c_str());
     {std::lock_guard<std::mutex> lock(downloadMutex_1); scrapeStatus = 2;}
     file_name = getFileName(decodeUrl(source_url));
     // printf("Scraping Filename=%s Filesize=%ld\n", file_name.c_str(), file_size);
-    if (file_size>0){
+    if (!file_size.empty()){
         scrape_url.append("&romtaille=");
-        scrape_url.append(std::to_string(file_size));
+        // scrape_url.append(std::to_string(file_size));
+        scrape_url.append(file_size);
         scrape_url.append("&romnom=");
         scrape_url.append(encodeUrl(file_name));
     }else{
@@ -742,7 +746,7 @@ void scrapeThreat(const std::string& source_url,const std::string& system){
     }
     json jsonData = json::parse(res);
 
-    if (file_size<0){
+    if (file_size.empty()){
         // std::array jeux = jsonData["response"]["jeux"];
         if (jsonData["response"]["jeux"][0].size() == 0) {
             curl_easy_cleanup(curl);
@@ -753,7 +757,7 @@ void scrapeThreat(const std::string& source_url,const std::string& system){
             return;
         }
     }
-    for (const auto& media : file_size>0?jsonData["response"]["jeu"]["medias"]:jsonData["response"]["jeux"][0]["medias"]) {
+    for (const auto& media : !file_size.empty()?jsonData["response"]["jeu"]["medias"]:jsonData["response"]["jeux"][0]["medias"]) {
         if (media["type"] == "ss"){
             httpRequest(curl, media["url"], SCRAPED_PATH "/" + decodeUrl(file_name)+".1.ss.png");
             break;
@@ -766,35 +770,35 @@ void scrapeThreat(const std::string& source_url,const std::string& system){
         std::lock_guard<std::mutex> lock(downloadMutex_1);
         scrapeStatus = 0;
         scrapeString.append("Genres:");
-        for (const auto& genre : file_size>0?jsonData["response"]["jeu"]["genres"]:jsonData["response"]["jeux"][0]["genres"]) {
+        for (const auto& genre : !file_size.empty()?jsonData["response"]["jeu"]["genres"]:jsonData["response"]["jeux"][0]["genres"]) {
             scrapeString.append(" ");
-            scrapeString.append(genre["noms"][file_size>0?0:1]["text"]);
+            scrapeString.append(genre["noms"][!file_size.empty()?0:1]["text"]);
         }
-        if (!(file_size>0?jsonData["response"]["jeu"]["dates"][0]["text"]:jsonData["response"]["jeux"][0]["dates"][0]["text"]).empty()){
+        if (!(!file_size.empty()?jsonData["response"]["jeu"]["dates"][0]["text"]:jsonData["response"]["jeux"][0]["dates"][0]["text"]).empty()){
             scrapeString.append("\nRelease: ");
-            scrapeString.append(file_size>0?jsonData["response"]["jeu"]["dates"][0]["text"]:jsonData["response"]["jeux"][0]["dates"][0]["text"]);
+            scrapeString.append(!file_size.empty()?jsonData["response"]["jeu"]["dates"][0]["text"]:jsonData["response"]["jeux"][0]["dates"][0]["text"]);
         }
-        if (!(file_size>0?jsonData["response"]["jeu"]["systeme"]["text"]:jsonData["response"]["jeux"][0]["systeme"]["text"]).empty()){
+        if (!(!file_size.empty()?jsonData["response"]["jeu"]["systeme"]["text"]:jsonData["response"]["jeux"][0]["systeme"]["text"]).empty()){
             scrapeString.append("\nSystem: ");
-            scrapeString.append(file_size>0?jsonData["response"]["jeu"]["systeme"]["text"]:jsonData["response"]["jeux"][0]["systeme"]["text"]);
+            scrapeString.append(!file_size.empty()?jsonData["response"]["jeu"]["systeme"]["text"]:jsonData["response"]["jeux"][0]["systeme"]["text"]);
         }
-        if (!(file_size>0?jsonData["response"]["jeu"]["joueurs"]["text"]:jsonData["response"]["jeux"][0]["joueurs"]["text"]).empty()){
+        if (!(!file_size.empty()?jsonData["response"]["jeu"]["joueurs"]["text"]:jsonData["response"]["jeux"][0]["joueurs"]["text"]).empty()){
             scrapeString.append("\nPlayer: ");
-            scrapeString.append(file_size>0?jsonData["response"]["jeu"]["joueurs"]["text"]:jsonData["response"]["jeux"][0]["joueurs"]["text"]);
+            scrapeString.append(!file_size.empty()?jsonData["response"]["jeu"]["joueurs"]["text"]:jsonData["response"]["jeux"][0]["joueurs"]["text"]);
         }
-        if (!(file_size>0?jsonData["response"]["jeu"]["developpeur"]["text"]:jsonData["response"]["jeux"][0]["developpeur"]["text"]).empty()){
+        if (!(!file_size.empty()?jsonData["response"]["jeu"]["developpeur"]["text"]:jsonData["response"]["jeux"][0]["developpeur"]["text"]).empty()){
             scrapeString.append("\nDeveloper: ");
-            scrapeString.append(file_size>0?jsonData["response"]["jeu"]["developpeur"]["text"]:jsonData["response"]["jeux"][0]["developpeur"]["text"]);
+            scrapeString.append(!file_size.empty()?jsonData["response"]["jeu"]["developpeur"]["text"]:jsonData["response"]["jeux"][0]["developpeur"]["text"]);
         }
-        if (!(file_size>0?jsonData["response"]["jeu"]["editeur"]["text"]:jsonData["response"]["jeux"][0]["editeur"]["text"]).empty()){
+        if (!(!file_size.empty()?jsonData["response"]["jeu"]["editeur"]["text"]:jsonData["response"]["jeux"][0]["editeur"]["text"]).empty()){
             scrapeString.append("\nPublisher: ");
-            scrapeString.append(file_size>0?jsonData["response"]["jeu"]["editeur"]["text"]:jsonData["response"]["jeux"][0]["editeur"]["text"]);
+            scrapeString.append(!file_size.empty()?jsonData["response"]["jeu"]["editeur"]["text"]:jsonData["response"]["jeux"][0]["editeur"]["text"]);
         }
-        if (!(file_size>0?jsonData["response"]["jeu"]["resolution"]:jsonData["response"]["jeux"][0]["resolution"]).empty()){
+        if (!(!file_size.empty()?jsonData["response"]["jeu"]["resolution"]:jsonData["response"]["jeux"][0]["resolution"]).empty()){
             scrapeString.append("\nResolution: ");
-            scrapeString.append(file_size>0?jsonData["response"]["jeu"]["resolution"]:jsonData["response"]["jeux"][0]["resolution"]);
+            scrapeString.append(!file_size.empty()?jsonData["response"]["jeu"]["resolution"]:jsonData["response"]["jeux"][0]["resolution"]);
         }
-        scrapeString2.append(file_size>0?jsonData["response"]["jeu"]["synopsis"][0]["text"]:jsonData["response"]["jeux"][0]["synopsis"][1]["text"]);
+        scrapeString2.append(!file_size.empty()?jsonData["response"]["jeu"]["synopsis"][0]["text"]:jsonData["response"]["jeux"][0]["synopsis"][1]["text"]);
     }
 }
 
@@ -1010,7 +1014,7 @@ int main(int, char**)
                                     std::thread thread_1(downloadThreat, res_item.url, dest_path);
                                     thread_1.detach();
                                 }else{  // Queue download
-                                    downloadQueue.emplace(downloadQueue.begin(), res_item.url, dest_path);
+                                    downloadQueue.emplace(downloadQueue.begin(), res_item.url, dest_path, res_item.size);
                                 }
                             }
                         }
@@ -1022,7 +1026,7 @@ int main(int, char**)
                             // scrapeString.append("\nFile: " + std::string(ROMS_PATH) + "/" + res_item.system + "/" + getFileName(decodeUrl(res_item.url)));
                             // std::cout << httpRequestAsString(g_curl, res_item.url.c_str());
                             // std::cout << httpRequestAsString(g_curl, "https://api.screenscraper.fr/api2/ssuserInfos.php?devid=xxx&devpassword=yyy&softname=zzz&output=xml&ssid=leonkasovan&sspassword=rikadanR1");
-                            std::thread thread_2(scrapeThreat, res_item.url, res_item.system);
+                            std::thread thread_2(scrapeThreat, res_item.url, res_item.system, res_item.size);
                             thread_2.detach();
                             ImGui::OpenPopup("ViewScrape");
                         }
@@ -1044,7 +1048,7 @@ int main(int, char**)
                                     std::thread thread_1(downloadThreat, res_item.url, dest_path);
                                     thread_1.detach();
                                 }else{  // Queue download
-                                    downloadQueue.emplace(downloadQueue.begin(), res_item.url, dest_path);
+                                    downloadQueue.emplace(downloadQueue.begin(), res_item.url, dest_path, res_item.size);
                                 }
                             }
                             ImGui::SameLine();
