@@ -87,5 +87,9 @@ systemesListe.json:
 $(EXE): system_scrape_id.h $(OBJS)
 	$(CXX) -o $@ $^ $(CXXFLAGS) $(LIBS)
 
+db:
+	wget https://github.com/leonkasovan/RDL/releases/download/v1.0.0/db.zip
+	unzip db.zip
+
 clean:
 	rm -f $(EXE) $(OBJS)
