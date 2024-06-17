@@ -8,6 +8,7 @@
 // 4. Build database using lua script
 // 5. DB support for nopaystation tsv 
 // 6. (done) Read/Write setting from imgui.ini
+// 7. (done) Filtered system for searching
 
 // Fix:
 // - (done) handle when scrape found none
@@ -50,11 +51,14 @@ using json = nlohmann::json;
 #define DEFAULT_ROMS_PATH_3 "/userdata/roms"
 #define DEFAULT_ROMS_PATH_4 "/roms"
 #define DEFAULT_ROMS_PATH_5 "/roms2"
+#define DEFAULT_NEW_DB_SELECTED 1
 
 struct RDL_Setting {
     unsigned int view_result_limit;
     char roms_path[1024];
 };
+
+std::map<std::string, int> db_selected;
 
 struct RDL_Setting AppSetting = { 0, "" };
 
@@ -71,11 +75,12 @@ bool isDirectoryExists(const char *path) {
 }
 
 static void MyAppHandler_ClearAll(ImGuiContext* ctx, ImGuiSettingsHandler*){
-    printf("MyAppHandler_ClearAll:\n");
+    // printf("MyAppHandler_ClearAll:\n");
 }
 static void MyAppHandler_ApplyAll(ImGuiContext* ctx, ImGuiSettingsHandler*){
-    printf("MyAppHandler_ApplyAll:\n");
+    // printf("MyAppHandler_ApplyAll:\n");
 
+    // Apply default value for 1st initialization
     if (AppSetting.view_result_limit == 0) AppSetting.view_result_limit = DEFAULT_VIEW_RESULT_LIMIT;
     if (!AppSetting.roms_path[0]){
         if (isDirectoryExists(DEFAULT_ROMS_PATH_1))
@@ -91,23 +96,43 @@ static void MyAppHandler_ApplyAll(ImGuiContext* ctx, ImGuiSettingsHandler*){
             strcpy(AppSetting.roms_path, "roms");
         }
     }
-    // printf("ViewResultLimit: %d\n", AppSetting.view_result_limit);
-    // printf("RomsPath: %s\n", AppSetting.roms_path);
+
+    DIR *dir1;
+    struct dirent *entry;
+
+    dir1 = opendir(DB_PATH);
+    if (dir1){
+        entry = readdir(dir1);
+        do {
+            if (strstr(entry->d_name, ".csv")) {
+                if (db_selected.find(entry->d_name) != db_selected.end()) {   // existing db
+                }else{  // New db found
+                    db_selected[entry->d_name] = DEFAULT_NEW_DB_SELECTED;
+                }
+            }
+        } while ((entry = readdir(dir1)) != NULL);
+        closedir(dir1);
+    }
 }
 static void* MyAppHandler_ReadOpen(ImGuiContext*, ImGuiSettingsHandler*, const char* name){
     // printf("MyAppHandler_ReadOpen: %s\n", name);
-    return (void*)&AppSetting;
+
+    if (strcmp(name, "RDL") == 0)
+        return (void*)&AppSetting;
+    else
+        return (void*)&db_selected;
 }
 static void MyAppHandler_ReadLine(ImGuiContext*, ImGuiSettingsHandler*, void* entry, const char* line){
-    struct RDL_Setting *AppSetting = (struct RDL_Setting *)entry;
+    // struct RDL_Setting *AppSetting = (struct RDL_Setting *)entry;
     int i;
     char s[256];
     // printf("MyAppHandler_ReadLine: %s\n", line);
     if (sscanf(line, "ViewResultLimit=%d", &i) == 1) {
-        AppSetting->view_result_limit = i;
-    }
-    if (sscanf(line, "RomsPath=%256s", s) == 1) {
-        strcpy(AppSetting->roms_path, s);
+        AppSetting.view_result_limit = i;
+    }else if (sscanf(line, "RomsPath=%256s", s) == 1) {
+        strcpy(AppSetting.roms_path, s);
+    }else if (sscanf(line, "%255[^=]=%d", s, &i) == 2) {
+        db_selected[s]=i;
     }
 }
 static void MyAppHandler_WriteAll(ImGuiContext* ctx, ImGuiSettingsHandler* handler, ImGuiTextBuffer* buf){
@@ -119,7 +144,16 @@ static void MyAppHandler_WriteAll(ImGuiContext* ctx, ImGuiSettingsHandler* handl
     if (AppSetting.roms_path[0]){
         buf->appendf("RomsPath=%s\n", AppSetting.roms_path);
     }
+
+    buf->appendf("\n[%s][DB]\n", handler->TypeName);
+    for (const auto& pair : db_selected) {
+        buf->appendf("%s=%d\n", pair.first.c_str(), pair.second);
+    }
     // printf("MyAppHandler_WriteAll: %s\n", buf->c_str());
+}
+
+static void MyAppHandler_ReadInit(ImGuiContext* ctx, ImGuiSettingsHandler*){
+    printf("MyAppHandler_ReadInit:\n");
 }
 
 void initialize_settings_export()
@@ -128,6 +162,7 @@ void initialize_settings_export()
     ini_handler.TypeName = "MyApp";
     ini_handler.TypeHash = ImHashStr( "MyApp" );
     ini_handler.ClearAllFn = MyAppHandler_ClearAll;
+    ini_handler.ReadInitFn = MyAppHandler_ReadInit;
     ini_handler.ApplyAllFn = MyAppHandler_ApplyAll;
     ini_handler.ReadOpenFn = MyAppHandler_ReadOpen;
     ini_handler.ReadLineFn = MyAppHandler_ReadLine;
@@ -254,7 +289,9 @@ int find_keyword2(char *line, char **lword) {
 			}else{
 				found = found & 1;
 			}
-		}else{
+		}else if (*word == '@') {
+            //skip;
+        }else{
 			if (strstr(in_line, word)) {
 				found = found & 1;
 			}else{
@@ -328,6 +365,16 @@ int SearchCSV(std::vector<tSearchResult>& result, const char *csv_fname, char **
 		category = strdup(p+1);
 		p = strrchr(category, '\r'); if (p) *p = '\0';	// replace \r to \0
 		p = strrchr(category, '\n'); if (p) *p = '\0';	// replace \n to \0
+
+        if (lword[0][0] == '@'){    // check if filtered request by system
+            char *selected_system = lword[0];
+            selected_system++; // skip first char @
+            if (strcmp(selected_system, category)){    // skip this db if category != selected_system
+                fclose(f);
+                free(category);
+                return start_no;
+            }
+        }
 	}
 	
 	fgets(line, MAX_LINE, f);		// Line 2: #url=https://archive.org/download/cylums or #url=https://archive.org/download/cylums_collection.zip/ 
@@ -916,7 +963,7 @@ int main(int, char**)
         {
             static bool show_app = true;
             static char rom_name[1024] = "adventure";
-            const char* systems[] = { "all", "psx", "ps2", "ps3", "psvita", "snes", "nds", "3ds", "wii", "gba", "arcade", "fbneo" };
+            const char* systems[] = { "all", "naomi", "ps2", "psx", "n64", "snes", "nds", "3ds", "wii", "gba", "megadrive", "fbneo" };
             static int system_current = 0;
             static char query[1030] = "";
             static std::vector<tSearchResult> result;
@@ -935,14 +982,12 @@ int main(int, char**)
             ImGui::InputText("Rom's Name", rom_name, IM_ARRAYSIZE(rom_name));
             ImGui::Combo("System", &system_current, systems, IM_ARRAYSIZE(systems));
             if (ImGui::Button("Search")) {
-                DIR *dir1;
-                struct dirent *entry;
                 char fullpath[MAX_LINE], *p;
 
                 result.clear();
                 n_found = 0;
                 if (system_current){
-                    snprintf(query, 1030, "%s: %s", systems[system_current], rom_name);
+                    snprintf(query, 1030, "@%s %s", systems[system_current], rom_name);
                 }else{
                     strcpy(query, rom_name);
                 }
@@ -952,20 +997,17 @@ int main(int, char**)
                     p++;
                 }
 
-                dir1 = opendir(DB_PATH);
-                if (dir1){
-                    lword = split_word(query);
-                    entry = readdir(dir1);
-                    do {
-                        if (strstr(entry->d_name, ".csv")) {
-                            sprintf(fullpath, DB_PATH"/%s", entry->d_name);
-                            n_found = SearchCSV(result, fullpath, lword, n_found);
-                            // n_found = SearchCSV(result, "/home/deck/Projects/imgui/examples/roms_downloader/cylums_snes_rom_collection.csv", lword, n_found);
-                        }
-                    } while ((entry = readdir(dir1)) != NULL);
-                    free_word(lword);
-                    closedir(dir1);
+                lword = split_word(query);
+                for (const auto& pair : db_selected) {
+                    if (pair.second){
+                        // printf("Searching in %s\n", pair.first.c_str());
+                        sprintf(fullpath, DB_PATH"/%s", pair.first.c_str());
+                        n_found = SearchCSV(result, fullpath, lword, n_found);
+                    }else{
+                        // printf("%s skipped\n", pair.first.c_str());
+                    }
                 }
+                free_word(lword);
             }
             if (query[0]) {
                 ImGuiTableFlags flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable;
