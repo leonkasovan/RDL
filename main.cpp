@@ -396,7 +396,9 @@ int find_keyword3(char *line, char **lword) {
 			}else{
 				found = found & 1;
 			}
-		}else{
+		}else if (*word == '@') {
+            //skip;
+        }else{
 			if (strstr(in_line, word)) {
 				found = found & 1;
 			}else{
@@ -621,7 +623,7 @@ int Search_PSP_GAMES(std::vector<tSearchResult>& result, const char *tsv_fname, 
 int Search_PSX_GAMES(std::vector<tSearchResult>& result, const char *tsv_fname, char **lword, unsigned int start_no) {
 	FILE *f;
 	char line[MAX_LINE];
-    char target[MAX_LINE];
+    // char target[MAX_LINE];
 	char *p;
 	char *a_title_id;
     char *a_region;
@@ -649,7 +651,6 @@ int Search_PSX_GAMES(std::vector<tSearchResult>& result, const char *tsv_fname, 
         }
     }
 	
-    // printf("Line %d: \n", __LINE__);
     // Title ID|Region|Name|PKG direct link|Content ID|Last Modification Date|Original Name|File Size|SHA256
 	while (fgets(line, MAX_LINE, f)) { // Process next line: the real csv data
         a_title_id = my_strtok(line, '\t');
@@ -694,18 +695,18 @@ int Search_PSX_GAMES(std::vector<tSearchResult>& result, const char *tsv_fname, 
 	}
     // printf("Line %d: \n", __LINE__);
 	fclose(f);
-    // printf("Line %d: \n", __LINE__);
 	return start_no;
 }
 
 int SearchTSV(std::vector<tSearchResult>& result, const char *tsv_fname, char **lword, unsigned int start_no) {
     if (!strcmp(tsv_fname, "db/PSV_GAMES.tsv")){
-        Search_PSV_GAMES(result, tsv_fname, lword, start_no);
+        return Search_PSV_GAMES(result, tsv_fname, lword, start_no);
     }else if (!strcmp(tsv_fname, "db/PSP_GAMES.tsv")){
-        Search_PSP_GAMES(result, tsv_fname, lword, start_no);
+        return Search_PSP_GAMES(result, tsv_fname, lword, start_no);
     }else if (!strcmp(tsv_fname, "db/PSX_GAMES.tsv")){
-        Search_PSX_GAMES(result, tsv_fname, lword, start_no);
+        return Search_PSX_GAMES(result, tsv_fname, lword, start_no);
     }
+    return start_no;
 }
 
 int SearchCSV(std::vector<tSearchResult>& result, const char *csv_fname, char **lword, unsigned int start_no) {
@@ -1227,9 +1228,8 @@ int main(int, char**)
     }
 
     // From 2.0.18: Enable native IME.
-#ifdef SDL_HINT_IME_SHOW_UI
     SDL_SetHint(SDL_HINT_IME_SHOW_UI, "1");
-#endif
+    SDL_SetHint("SDL_ENABLE_SCREEN_KEYBOARD", "1");
 
     // Create window with SDL_Renderer graphics context
     SDL_WindowFlags window_flags = (SDL_WindowFlags)(SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);

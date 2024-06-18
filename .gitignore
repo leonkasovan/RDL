@@ -1,7 +1,10 @@
 *.o
 *.csv
+*.tsv
 *.ini
 *.png
 *.json
+*.zip
+*.7z
 roms_downloader
 gen_system_scrape_id
