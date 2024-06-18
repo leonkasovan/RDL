@@ -59,7 +59,7 @@ std::map<std::string, int> scrapeId{
 {"atarist",42},
 //{"megacdjp",},
 {"c64",66},
-//{"psvita",},
+{"psvita",62},
 {"crvision",241},
 //{"mugen",},
 {"x1",113},

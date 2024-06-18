@@ -51,11 +51,31 @@ using json = nlohmann::json;
 #define DEFAULT_ROMS_PATH_3 "/userdata/roms"
 #define DEFAULT_ROMS_PATH_4 "/roms"
 #define DEFAULT_ROMS_PATH_5 "/roms2"
-#define DEFAULT_NEW_DB_SELECTED 1
+#define DEFAULT_NEW_CSV_SELECTED 1
+#define DEFAULT_NEW_TSV_SELECTED 2
 
 struct RDL_Setting {
     unsigned int view_result_limit;
     char roms_path[1024];
+};
+
+struct URLSystem {
+    std::string url;
+    std::string system;
+    std::string size;
+
+    // Constructor
+    URLSystem(const std::string& u, const std::string& s, const std::string& sz) : url(u), system(s), size(sz) {}
+};
+
+class tSearchResult {
+public:
+    tSearchResult(const std::string& system, const std::string& title, const std::string& url, const std::string& desc, const std::string& size): system(system), title(title), url(url), desc(desc), size(size) {}
+    std::string system;
+    std::string title;
+    std::string url;
+    std::string desc;
+    std::string size;
 };
 
 std::map<std::string, int> db_selected;
@@ -105,9 +125,14 @@ static void MyAppHandler_ApplyAll(ImGuiContext* ctx, ImGuiSettingsHandler*){
         entry = readdir(dir1);
         do {
             if (strstr(entry->d_name, ".csv")) {
-                if (db_selected.find(entry->d_name) != db_selected.end()) {   // existing db
-                }else{  // New db found
-                    db_selected[entry->d_name] = DEFAULT_NEW_DB_SELECTED;
+                if (db_selected.find(entry->d_name) == db_selected.end()) {   // New csv found
+                    db_selected[entry->d_name] = DEFAULT_NEW_CSV_SELECTED;
+                    printf("Found %s as CSV\n", entry->d_name);
+                }
+            }else if (strstr(entry->d_name, ".tsv")) {
+                if (db_selected.find(entry->d_name) == db_selected.end()) {   // New tsv found
+                    db_selected[entry->d_name] = DEFAULT_NEW_TSV_SELECTED;
+                    printf("Found %s as TSV\n", entry->d_name);
                 }
             }
         } while ((entry = readdir(dir1)) != NULL);
@@ -153,7 +178,7 @@ static void MyAppHandler_WriteAll(ImGuiContext* ctx, ImGuiSettingsHandler* handl
 }
 
 static void MyAppHandler_ReadInit(ImGuiContext* ctx, ImGuiSettingsHandler*){
-    printf("MyAppHandler_ReadInit:\n");
+    // printf("MyAppHandler_ReadInit:\n");
 }
 
 void initialize_settings_export()
@@ -305,6 +330,87 @@ int find_keyword2(char *line, char **lword) {
 	return found;
 }
 
+void formatFileSize(const char *inputSize, char *outputSize) {
+    // Convert input size from string to long long integer
+    long long sizeInBytes = atoll(inputSize);
+
+    // Define unit sizes
+    const double KB = 1024.0;             // Number of bytes in a kilobyte
+    const double MB = KB * 1024;          // Number of bytes in a megabyte
+    const double GB = MB * 1024;          // Number of bytes in a gigabyte
+    const double TB = GB * 1024;          // Number of bytes in a terabyte
+
+    // Determine appropriate unit and format the result
+    if (sizeInBytes < KB) {
+        sprintf(outputSize, "%lld B", sizeInBytes);
+    } else if (sizeInBytes < MB) {
+        sprintf(outputSize, "%.1f KB", sizeInBytes / KB);
+    } else if (sizeInBytes < GB) {
+        sprintf(outputSize, "%.1f MB", sizeInBytes / MB);
+    } else if (sizeInBytes < TB) {
+        sprintf(outputSize, "%.1f GB", sizeInBytes / GB);
+    } else {
+        sprintf(outputSize, "%.1f TB", sizeInBytes / TB);
+    }
+}
+
+// Function to format a number with commas
+void formatWithCommas(const char *inputNumber, char *outputNumber) {
+    int inputLength = strlen(inputNumber);      // Length of the input string
+    int outputLength = inputLength + (inputLength - 1) / 3; // Calculate the length of the output string including commas
+    outputNumber[outputLength] = '\0';          // Null-terminate the output string
+
+    // Indices for input and output strings
+    int inputIndex = inputLength - 1;           // Start from the end of input string
+    int outputIndex = outputLength - 1;         // Start from the end of output string
+    int commaCounter = 0;                       // Counter to track positions for commas
+
+    // Loop backwards through the input string, copying characters and inserting commas
+    while (inputIndex >= 0) {
+        if (commaCounter == 3) {
+            outputNumber[outputIndex--] = ',';  // Insert comma after every 3 digits
+            commaCounter = 0;                   // Reset counter after inserting a comma
+        }
+        outputNumber[outputIndex--] = inputNumber[inputIndex--]; // Copy digit
+        commaCounter++;                         // Increment the comma counter
+    }
+}
+
+// Find keyword(char **) in string line
+int find_keyword3(char *line, char **lword) {
+	char **p = lword;
+	char *word, *in_line;
+	int found = 1;
+
+    // printf("Line %d: %s\n", __LINE__, line);
+	in_line = strdup(line);
+    // printf("Line %d: \n", __LINE__);
+	SDL_strlwr(in_line);	// make 'input line' lower
+	while (*p) {
+		word = *p;
+		if (*word == '-') {
+			word++;
+			if (strstr(in_line, word)) {
+				found = found & 0;
+				break;
+			}else{
+				found = found & 1;
+			}
+		}else{
+			if (strstr(in_line, word)) {
+				found = found & 1;
+			}else{
+				found = found & 0;
+				break;
+			}
+		}
+		p++;
+	}
+    // printf("Line %d: \n", __LINE__);
+	free(in_line);
+	return found;
+}
+
 char *my_strtok(char *str, char delimiter) {
     static char *token; // Static variable to keep track of the current token
     if (str != NULL) {
@@ -329,26 +435,280 @@ char *my_strtok(char *str, char delimiter) {
     }
 }
 
-struct URLSystem {
-    std::string url;
-    std::string system;
-    std::string size;
+int Search_PSV_GAMES(std::vector<tSearchResult>& result, const char *tsv_fname, char **lword, unsigned int start_no) {
+	FILE *f;
+	char line[MAX_LINE];
+    char target[MAX_LINE];
+	char *category = NULL, *base_url = NULL, *p;
+	char *a_title_id;
+    char *a_region;
+    char *a_name;
+    char *a_pkg_link;
+    char *a_zrif;
+    char *a_content_id;
+    char *a_last_update;
+    char *a_original_name;
+    char *a_file_size;
+    char *a_sha256;
+    char *a_fw;
+    char *a_version;
+    char a_desc[300];
+    char formattedNumber[32];
 
-    // Constructor
-    URLSystem(const std::string& u, const std::string& s, const std::string& sz) : url(u), system(s), size(sz) {}
-};
+	f = fopen(tsv_fname, "r");
+	if (!f) {
+		return start_no;
+	}
 
-class tSearchResult {
-public:
-    tSearchResult(const std::string& system, const std::string& title, const std::string& url, const std::string& desc, const std::string& size): system(system), title(title), url(url), desc(desc), size(size) {}
-    std::string system;
-    std::string title;
-    std::string url;
-    std::string desc;
-    std::string size;
-};
+    if (lword[0][0] == '@'){    // check if filtered request by system
+        char *selected_system = lword[0];
+        selected_system++; // skip first char @
+        if (strcmp(selected_system, "psvita")){    // skip this db if selected_system != "psvita"
+            fclose(f);
+            return start_no;
+        }
+    }
+	
+    // printf("Line %d: \n", __LINE__);
+    // Title ID|Region|Name|PKG direct link|zRIF|Content ID|Last Modification Date|Original Name|File Size|SHA256|Required FW|App Version
+	while (fgets(line, MAX_LINE, f)) { // Process next line: the real csv data
+		// a_name = my_strtok(line, '\t');
+		// a_title = my_strtok(NULL, '\t');
+        // a_desc = my_strtok(NULL, '\t');
+        // a_size = my_strtok(NULL, '\t');
+        // printf("Line %d: %s\n", __LINE__, line);
+        a_title_id = my_strtok(line, '\t');
+        // printf("Line %d: %s\n", __LINE__, a_title_id);
+		a_region = my_strtok(NULL, '\t');
+        // printf("Line %d: %s\n", __LINE__, a_region);
+        a_name = my_strtok(NULL, '\t');
+        // printf("Line %d: %s\n", __LINE__, a_name);
+        a_pkg_link = my_strtok(NULL, '\t');
+        a_zrif = my_strtok(NULL, '\t');
+        a_content_id = my_strtok(NULL, '\t');
+        a_last_update = my_strtok(NULL, '\t');
+        a_original_name = my_strtok(NULL, '\t');
+        a_file_size = my_strtok(NULL, '\t');
+        a_sha256 = my_strtok(NULL, '\t');
+        a_fw = my_strtok(NULL, '\t');
+        a_version = my_strtok(NULL, '\t');
+        // printf("Line %d: \n", __LINE__);
+        
+        // add to list if keyword is found in title
+        if (find_keyword3(a_name, lword)) {
+			start_no++;
+			
+			// remove trailing end-of-line in a_size
+			p = strrchr(a_version, '\r'); // windows end of line
+			if (p) {
+				*p = '\0';	// replace \r to \0
+			}else{
+				p = strrchr(a_version, '\n');
+				if (p) *p = '\0';	// replace \n to \0
+			}
+      
+            // snprintf(target, MAX_LINE, "%s/%s", base_url, a_name);
+            // result.emplace_back(category, a_title, target, a_desc, a_size);
+            formatWithCommas(a_file_size, formattedNumber);
+            snprintf(a_desc, 299, "Size: %s (", formattedNumber);
+            formatFileSize(a_file_size, formattedNumber);
+            strcat(a_desc,formattedNumber);
+            strcat(a_desc,")");
+            // strcat(a_desc,a_region);
+            if (strlen(a_pkg_link)>10){
+                // printf("%s, %s (%s), %s, %s, %s\n", "psvita", a_name, a_region, "a_pkg_link", a_desc, a_file_size);
+                result.emplace_back("psvita", Format("%s (%s)", a_name, a_region), a_pkg_link, a_desc, a_file_size);
+            }
+		}
+	}
+    // printf("Line %d: \n", __LINE__);
+	fclose(f);
+    // printf("Line %d: \n", __LINE__);
+	if (category) free(category);
+	if (base_url) free(base_url);
+	return start_no;
+}
 
-int SearchCSV(std::vector<tSearchResult>& result, const char *csv_fname, char **lword, unsigned int start_no) { 
+int Search_PSP_GAMES(std::vector<tSearchResult>& result, const char *tsv_fname, char **lword, unsigned int start_no) {
+	FILE *f;
+	char line[MAX_LINE];
+    char target[MAX_LINE];
+	char *category = NULL, *base_url = NULL, *p;
+	char *a_title_id;
+    char *a_region;
+    char *a_type;
+    char *a_name;
+    char *a_pkg_link;
+    char *a_content_id;
+    char *a_last_update;
+    char *a_rap;
+    char *a_dl_rap;
+    char *a_file_size;
+    char *a_sha256;
+    char a_desc[300];
+    char formattedNumber[32];
+
+	f = fopen(tsv_fname, "r");
+	if (!f) {
+		return start_no;
+	}
+
+    if (lword[0][0] == '@'){    // check if filtered request by system
+        char *selected_system = lword[0];
+        selected_system++; // skip first char @
+        if (strcmp(selected_system, "psp")){    // skip this db if selected_system != "psp"
+            fclose(f);
+            return start_no;
+        }
+    }
+	
+    // Title ID|Region|Type|Name|PKG direct link|Content ID|Last Modification Date|RAP|Download .RAP file|File Size|SHA256
+	while (fgets(line, MAX_LINE, f)) { // Process next line: the real csv data
+        a_title_id = my_strtok(line, '\t');
+        // printf("Line %d: %s\n", __LINE__, a_title_id);
+		a_region = my_strtok(NULL, '\t');
+        a_type = my_strtok(NULL, '\t');
+        // printf("Line %d: %s\n", __LINE__, a_region);
+        a_name = my_strtok(NULL, '\t');
+        // printf("Line %d: %s\n", __LINE__, a_name);
+        a_pkg_link = my_strtok(NULL, '\t');
+        a_content_id = my_strtok(NULL, '\t');
+        a_last_update = my_strtok(NULL, '\t');
+        a_rap = my_strtok(NULL, '\t');
+        a_dl_rap = my_strtok(NULL, '\t');
+        a_file_size = my_strtok(NULL, '\t');
+        a_sha256 = my_strtok(NULL, '\t');
+        
+        // add to list if keyword is found in title
+        if (find_keyword3(a_name, lword)) {
+			start_no++;
+			
+			// remove trailing end-of-line in a_size
+			p = strrchr(a_sha256, '\r'); // windows end of line
+			if (p) {
+				*p = '\0';	// replace \r to \0
+			}else{
+				p = strrchr(a_sha256, '\n');
+				if (p) *p = '\0';	// replace \n to \0
+			}
+      
+            // snprintf(target, MAX_LINE, "%s/%s", base_url, a_name);
+            // result.emplace_back(category, a_title, target, a_desc, a_size);
+            formatWithCommas(a_file_size, formattedNumber);
+            snprintf(a_desc, 299, "Size: %s (", formattedNumber);
+            formatFileSize(a_file_size, formattedNumber);
+            strcat(a_desc,formattedNumber);
+            strcat(a_desc,")");
+            // strcat(a_desc,a_region);
+            if (!strcmp(a_type,"Go")){
+                strcat(a_desc," Type: PSP");
+                strcat(a_desc,a_type);
+            }
+
+            // printf("%s, %s (%s), %s, %s, %s\n", "psp", a_name, a_region, "a_pkg_link", a_desc, a_file_size);
+            if (strlen(a_pkg_link)>10)
+                result.emplace_back("psp", Format("%s (%s)", a_name, a_region), a_pkg_link, a_desc, a_file_size);
+		}
+	}
+    // printf("Line %d: \n", __LINE__);
+	fclose(f);
+    // printf("Line %d: \n", __LINE__);
+	if (category) free(category);
+	if (base_url) free(base_url);
+	return start_no;
+}
+
+int Search_PSX_GAMES(std::vector<tSearchResult>& result, const char *tsv_fname, char **lword, unsigned int start_no) {
+	FILE *f;
+	char line[MAX_LINE];
+    char target[MAX_LINE];
+	char *p;
+	char *a_title_id;
+    char *a_region;
+    char *a_name;
+    char *a_pkg_link;
+    char *a_content_id;
+    char *a_last_update;
+    char *a_original_name;
+    char *a_file_size;
+    char *a_sha256;
+    char a_desc[300];
+    char formattedNumber[32];
+
+	f = fopen(tsv_fname, "r");
+	if (!f) {
+		return start_no;
+	}
+
+    if (lword[0][0] == '@'){    // check if filtered request by system
+        char *selected_system = lword[0];
+        selected_system++; // skip first char @
+        if (strcmp(selected_system, "psx")){    // skip this db if selected_system != "psx"
+            fclose(f);
+            return start_no;
+        }
+    }
+	
+    // printf("Line %d: \n", __LINE__);
+    // Title ID|Region|Name|PKG direct link|Content ID|Last Modification Date|Original Name|File Size|SHA256
+	while (fgets(line, MAX_LINE, f)) { // Process next line: the real csv data
+        a_title_id = my_strtok(line, '\t');
+        // printf("Line %d: %s\n", __LINE__, a_title_id);
+		a_region = my_strtok(NULL, '\t');
+        // printf("Line %d: %s\n", __LINE__, a_region);
+        a_name = my_strtok(NULL, '\t');
+        // printf("Line %d: %s\n", __LINE__, a_name);
+        a_pkg_link = my_strtok(NULL, '\t');
+        a_content_id = my_strtok(NULL, '\t');
+        a_last_update = my_strtok(NULL, '\t');
+        a_original_name = my_strtok(NULL, '\t');
+        a_file_size = my_strtok(NULL, '\t');
+        a_sha256 = my_strtok(NULL, '\t');
+        // printf("Line %d: \n", __LINE__);
+        
+        // add to list if keyword is found in title
+        if (find_keyword3(a_name, lword)) {
+			start_no++;
+			
+			// remove trailing end-of-line in a_size
+			p = strrchr(a_sha256, '\r'); // windows end of line
+			if (p) {
+				*p = '\0';	// replace \r to \0
+			}else{
+				p = strrchr(a_sha256, '\n');
+				if (p) *p = '\0';	// replace \n to \0
+			}
+      
+            // snprintf(target, MAX_LINE, "%s/%s", base_url, a_name);
+            // result.emplace_back(category, a_title, target, a_desc, a_size);
+            formatWithCommas(a_file_size, formattedNumber);
+            snprintf(a_desc, 299, "Size: %s (", formattedNumber);
+            formatFileSize(a_file_size, formattedNumber);
+            strcat(a_desc,formattedNumber);
+            strcat(a_desc,")");
+            // strcat(a_desc,a_region);
+            if (strlen(a_pkg_link)>10)
+                result.emplace_back("psx", Format("%s (%s)", a_name, a_region), a_pkg_link, a_desc, a_file_size);
+                // printf("%s, %s (%s), %s, %s, %s\n", "psx", a_name, a_region, "a_pkg_link", a_desc, a_file_size);
+		}
+	}
+    // printf("Line %d: \n", __LINE__);
+	fclose(f);
+    // printf("Line %d: \n", __LINE__);
+	return start_no;
+}
+
+int SearchTSV(std::vector<tSearchResult>& result, const char *tsv_fname, char **lword, unsigned int start_no) {
+    if (!strcmp(tsv_fname, "db/PSV_GAMES.tsv")){
+        Search_PSV_GAMES(result, tsv_fname, lword, start_no);
+    }else if (!strcmp(tsv_fname, "db/PSP_GAMES.tsv")){
+        Search_PSP_GAMES(result, tsv_fname, lword, start_no);
+    }else if (!strcmp(tsv_fname, "db/PSX_GAMES.tsv")){
+        Search_PSX_GAMES(result, tsv_fname, lword, start_no);
+    }
+}
+
+int SearchCSV(std::vector<tSearchResult>& result, const char *csv_fname, char **lword, unsigned int start_no) {
 	FILE *f;
 	char line[MAX_LINE];
     char target[MAX_LINE];
@@ -403,9 +763,9 @@ int SearchCSV(std::vector<tSearchResult>& result, const char *csv_fname, char **
         a_size = my_strtok(NULL, '|');
         
         // Use snprintf to safely concatenate str1 and str2 into target
-        snprintf(target, MAX_LINE, "%s/%s/%s", AppSetting.roms_path, category, a_name);
+        // snprintf(target, MAX_LINE, "%s/%s/%s", AppSetting.roms_path, category, a_name);
         // Ensure null-termination and truncate if overflow
-        target[MAX_LINE - 1] = '\0';
+        // target[MAX_LINE - 1] = '\0';
 
         // add to list if keyword is found in title and rom file doesn't exists
 		// if (find_keyword2(a_title, lword) && !isFileExists(target)) {
@@ -738,7 +1098,8 @@ void downloadThreat(const std::string& source_url,const std::string& target_path
 }
 
 // Thread function that scrape based on url
-void scrapeThreat(const std::string& source_url,const std::string& system,const std::string& file_size){
+// void scrapeThreat(const std::string& source_url,const std::string& system,const std::string& file_size){
+void scrapeThreat(const tSearchResult& res_item){
     CURL* curl;
     // CURLcode res;
     // curl_off_t file_size;
@@ -754,21 +1115,25 @@ void scrapeThreat(const std::string& source_url,const std::string& system,const 
     // }else
     //     file_size = urlFilesize(curl, source_url.c_str());
     {std::lock_guard<std::mutex> lock(downloadMutex_1); scrapeStatus = 2;}
-    file_name = getFileName(decodeUrl(source_url));
+    file_name = getFileName(decodeUrl(res_item.url));
+    // printf("file_name.length=%ld\n", file_name.length());
+    if (file_name.substr(file_name.length() - 4) == ".pkg"){    // for tsv db format, adjust filename from source_url to its title
+        file_name = res_item.title + ".pkg";
+    }
     // printf("Scraping Filename=%s Filesize=%ld\n", file_name.c_str(), file_size);
-    if (!file_size.empty()){
+    if (!res_item.size.empty()){
         scrape_url.append("&romtaille=");
         // scrape_url.append(std::to_string(file_size));
-        scrape_url.append(file_size);
+        scrape_url.append(res_item.size);
         scrape_url.append("&romnom=");
         scrape_url.append(encodeUrl(file_name));
     }else{
         scrape_url = "https://api.screenscraper.fr/api2/jeuRecherche.php?output=json&devid=recalbox&devpassword=C3KbyjX8PKsUgm2tu53y&softname=Emulationstation-Recalbox-9.1&ssid=test&sspassword=test";
         scrape_url.append("&recherche=");
-        scrape_url.append(encodeUrl(getFileNameWithoutExtension(decodeUrl(source_url))));
+        scrape_url.append(encodeUrl(getFileNameWithoutExtension(decodeUrl(res_item.url))));
     }
     scrape_url.append("&systemeid=");
-    scrape_url.append(std::to_string(scrapeId[system]));
+    scrape_url.append(std::to_string(scrapeId[res_item.system]));
     // std::cout << "Scrape=" << scrape_url << std::endl;
     res = httpRequestAsString(curl, scrape_url);
     {std::lock_guard<std::mutex> lock(downloadMutex_1); scrapeStatus = 3;}
@@ -793,7 +1158,7 @@ void scrapeThreat(const std::string& source_url,const std::string& system,const 
     }
     json jsonData = json::parse(res);
 
-    if (file_size.empty()){
+    if (res_item.size.empty()){
         // std::array jeux = jsonData["response"]["jeux"];
         if (jsonData["response"]["jeux"][0].size() == 0) {
             curl_easy_cleanup(curl);
@@ -804,7 +1169,7 @@ void scrapeThreat(const std::string& source_url,const std::string& system,const 
             return;
         }
     }
-    for (const auto& media : !file_size.empty()?jsonData["response"]["jeu"]["medias"]:jsonData["response"]["jeux"][0]["medias"]) {
+    for (const auto& media : !res_item.size.empty()?jsonData["response"]["jeu"]["medias"]:jsonData["response"]["jeux"][0]["medias"]) {
         if (media["type"] == "ss"){
             httpRequest(curl, media["url"], SCRAPED_PATH "/" + decodeUrl(file_name)+".1.ss.png");
             break;
@@ -817,35 +1182,35 @@ void scrapeThreat(const std::string& source_url,const std::string& system,const 
         std::lock_guard<std::mutex> lock(downloadMutex_1);
         scrapeStatus = 0;
         scrapeString.append("Genres:");
-        for (const auto& genre : !file_size.empty()?jsonData["response"]["jeu"]["genres"]:jsonData["response"]["jeux"][0]["genres"]) {
+        for (const auto& genre : !res_item.size.empty()?jsonData["response"]["jeu"]["genres"]:jsonData["response"]["jeux"][0]["genres"]) {
             scrapeString.append(" ");
-            scrapeString.append(genre["noms"][!file_size.empty()?0:1]["text"]);
+            scrapeString.append(genre["noms"][!res_item.size.empty()?0:1]["text"]);
         }
-        if (!(!file_size.empty()?jsonData["response"]["jeu"]["dates"][0]["text"]:jsonData["response"]["jeux"][0]["dates"][0]["text"]).empty()){
+        if (!(!res_item.size.empty()?jsonData["response"]["jeu"]["dates"][0]["text"]:jsonData["response"]["jeux"][0]["dates"][0]["text"]).empty()){
             scrapeString.append("\nRelease: ");
-            scrapeString.append(!file_size.empty()?jsonData["response"]["jeu"]["dates"][0]["text"]:jsonData["response"]["jeux"][0]["dates"][0]["text"]);
+            scrapeString.append(!res_item.size.empty()?jsonData["response"]["jeu"]["dates"][0]["text"]:jsonData["response"]["jeux"][0]["dates"][0]["text"]);
         }
-        if (!(!file_size.empty()?jsonData["response"]["jeu"]["systeme"]["text"]:jsonData["response"]["jeux"][0]["systeme"]["text"]).empty()){
+        if (!(!res_item.size.empty()?jsonData["response"]["jeu"]["systeme"]["text"]:jsonData["response"]["jeux"][0]["systeme"]["text"]).empty()){
             scrapeString.append("\nSystem: ");
-            scrapeString.append(!file_size.empty()?jsonData["response"]["jeu"]["systeme"]["text"]:jsonData["response"]["jeux"][0]["systeme"]["text"]);
+            scrapeString.append(!res_item.size.empty()?jsonData["response"]["jeu"]["systeme"]["text"]:jsonData["response"]["jeux"][0]["systeme"]["text"]);
         }
-        if (!(!file_size.empty()?jsonData["response"]["jeu"]["joueurs"]["text"]:jsonData["response"]["jeux"][0]["joueurs"]["text"]).empty()){
+        if (!(!res_item.size.empty()?jsonData["response"]["jeu"]["joueurs"]["text"]:jsonData["response"]["jeux"][0]["joueurs"]["text"]).empty()){
             scrapeString.append("\nPlayer: ");
-            scrapeString.append(!file_size.empty()?jsonData["response"]["jeu"]["joueurs"]["text"]:jsonData["response"]["jeux"][0]["joueurs"]["text"]);
+            scrapeString.append(!res_item.size.empty()?jsonData["response"]["jeu"]["joueurs"]["text"]:jsonData["response"]["jeux"][0]["joueurs"]["text"]);
         }
-        if (!(!file_size.empty()?jsonData["response"]["jeu"]["developpeur"]["text"]:jsonData["response"]["jeux"][0]["developpeur"]["text"]).empty()){
+        if (!(!res_item.size.empty()?jsonData["response"]["jeu"]["developpeur"]["text"]:jsonData["response"]["jeux"][0]["developpeur"]["text"]).empty()){
             scrapeString.append("\nDeveloper: ");
-            scrapeString.append(!file_size.empty()?jsonData["response"]["jeu"]["developpeur"]["text"]:jsonData["response"]["jeux"][0]["developpeur"]["text"]);
+            scrapeString.append(!res_item.size.empty()?jsonData["response"]["jeu"]["developpeur"]["text"]:jsonData["response"]["jeux"][0]["developpeur"]["text"]);
         }
-        if (!(!file_size.empty()?jsonData["response"]["jeu"]["editeur"]["text"]:jsonData["response"]["jeux"][0]["editeur"]["text"]).empty()){
+        if (!(!res_item.size.empty()?jsonData["response"]["jeu"]["editeur"]["text"]:jsonData["response"]["jeux"][0]["editeur"]["text"]).empty()){
             scrapeString.append("\nPublisher: ");
-            scrapeString.append(!file_size.empty()?jsonData["response"]["jeu"]["editeur"]["text"]:jsonData["response"]["jeux"][0]["editeur"]["text"]);
+            scrapeString.append(!res_item.size.empty()?jsonData["response"]["jeu"]["editeur"]["text"]:jsonData["response"]["jeux"][0]["editeur"]["text"]);
         }
-        if (!(!file_size.empty()?jsonData["response"]["jeu"]["resolution"]:jsonData["response"]["jeux"][0]["resolution"]).empty()){
+        if (!(!res_item.size.empty()?jsonData["response"]["jeu"]["resolution"]:jsonData["response"]["jeux"][0]["resolution"]).empty()){
             scrapeString.append("\nResolution: ");
-            scrapeString.append(!file_size.empty()?jsonData["response"]["jeu"]["resolution"]:jsonData["response"]["jeux"][0]["resolution"]);
+            scrapeString.append(!res_item.size.empty()?jsonData["response"]["jeu"]["resolution"]:jsonData["response"]["jeux"][0]["resolution"]);
         }
-        scrapeString2.append(!file_size.empty()?jsonData["response"]["jeu"]["synopsis"][0]["text"]:jsonData["response"]["jeux"][0]["synopsis"][1]["text"]);
+        scrapeString2.append(!res_item.size.empty()?jsonData["response"]["jeu"]["synopsis"][0]["text"]:jsonData["response"]["jeux"][0]["synopsis"][1]["text"]);
     }
 }
 
@@ -999,10 +1364,14 @@ int main(int, char**)
 
                 lword = split_word(query);
                 for (const auto& pair : db_selected) {
-                    if (pair.second){
+                    if (pair.second == DEFAULT_NEW_CSV_SELECTED){
                         // printf("Searching in %s\n", pair.first.c_str());
                         sprintf(fullpath, DB_PATH"/%s", pair.first.c_str());
                         n_found = SearchCSV(result, fullpath, lword, n_found);
+                    }else if (pair.second == DEFAULT_NEW_TSV_SELECTED){
+                        // printf("Searching in %s\n", pair.first.c_str());
+                        sprintf(fullpath, DB_PATH"/%s", pair.first.c_str());
+                        n_found = SearchTSV(result, fullpath, lword, n_found);
                     }else{
                         // printf("%s skipped\n", pair.first.c_str());
                     }
@@ -1068,7 +1437,8 @@ int main(int, char**)
                             // scrapeString.append("\nFile: " + std::string(ROMS_PATH) + "/" + res_item.system + "/" + getFileName(decodeUrl(res_item.url)));
                             // std::cout << httpRequestAsString(g_curl, res_item.url.c_str());
                             // std::cout << httpRequestAsString(g_curl, "https://api.screenscraper.fr/api2/ssuserInfos.php?devid=xxx&devpassword=yyy&softname=zzz&output=xml&ssid=leonkasovan&sspassword=rikadanR1");
-                            std::thread thread_2(scrapeThreat, res_item.url, res_item.system, res_item.size);
+                            // std::thread thread_2(scrapeThreat, res_item.url, res_item.system, res_item.size);
+                            std::thread thread_2(scrapeThreat, res_item);
                             thread_2.detach();
                             ImGui::OpenPopup("ViewScrape");
                         }
@@ -1101,7 +1471,12 @@ int main(int, char**)
                         }
                         if (ImGui::BeginPopupModal("ViewScrape")) {
                             if ((scrapeStatus == 0) && !image_loaded && (scrapeString.compare(0, 3, "ERR") != 0)){
-                                if (!LoadTextureFromFile((SCRAPED_PATH "/" + getFileName(decodeUrl(res_item.url))+".1.ss.png").c_str(), &my_texture, my_image_width, my_image_height, renderer)){
+                                std::string file_name = getFileName(decodeUrl(res_item.url));
+                                // printf("file_name.length=%ld\n", file_name.length());
+                                if (file_name.substr(file_name.length() - 4) == ".pkg"){    // for tsv db format, adjust filename from source_url to its title
+                                    file_name = res_item.title + ".pkg";
+                                }
+                                if (!LoadTextureFromFile((SCRAPED_PATH "/" + file_name +".1.ss.png").c_str(), &my_texture, my_image_width, my_image_height, renderer)){
                                     printf("Error: LoadTextureFromFile\n");
                                     image_loaded = false;
                                     // return -1;
