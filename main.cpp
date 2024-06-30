@@ -9,6 +9,8 @@
 // 5. DB support for nopaystation tsv 
 // 6. (done) Read/Write setting from imgui.ini
 // 7. (done) Filtered system for searching
+// 8. history
+// 9. last query for searching
 
 // Fix:
 // - (done) handle when scrape found none
@@ -57,6 +59,7 @@ using json = nlohmann::json;
 struct RDL_Setting {
     unsigned int view_result_limit;
     char roms_path[1024];
+    char query[100];
 };
 
 struct URLSystem {
@@ -116,6 +119,9 @@ static void MyAppHandler_ApplyAll(ImGuiContext* ctx, ImGuiSettingsHandler*){
             strcpy(AppSetting.roms_path, "roms");
         }
     }
+    if (!AppSetting.query[0]){
+        strcpy(AppSetting.query, "street fighter");
+    }
 
     DIR *dir1;
     struct dirent *entry;
@@ -156,6 +162,8 @@ static void MyAppHandler_ReadLine(ImGuiContext*, ImGuiSettingsHandler*, void* en
         AppSetting.view_result_limit = i;
     }else if (sscanf(line, "RomsPath=%256s", s) == 1) {
         strcpy(AppSetting.roms_path, s);
+    }else if (sscanf(line, "LastQuery=%99[^\n]", s) == 1) {
+        strcpy(AppSetting.query, s);
     }else if (sscanf(line, "%255[^=]=%d", s, &i) == 2) {
         db_selected[s]=i;
     }
@@ -168,6 +176,9 @@ static void MyAppHandler_WriteAll(ImGuiContext* ctx, ImGuiSettingsHandler* handl
     }
     if (AppSetting.roms_path[0]){
         buf->appendf("RomsPath=%s\n", AppSetting.roms_path);
+    }
+    if (AppSetting.query[0]){
+        buf->appendf("LastQuery=%s\n", AppSetting.query);
     }
 
     buf->appendf("\n[%s][DB]\n", handler->TypeName);
@@ -396,9 +407,7 @@ int find_keyword3(char *line, char **lword) {
 			}else{
 				found = found & 1;
 			}
-		}else if (*word == '@') {
-            //skip;
-        }else{
+		}else{
 			if (strstr(in_line, word)) {
 				found = found & 1;
 			}else{
@@ -623,7 +632,7 @@ int Search_PSP_GAMES(std::vector<tSearchResult>& result, const char *tsv_fname, 
 int Search_PSX_GAMES(std::vector<tSearchResult>& result, const char *tsv_fname, char **lword, unsigned int start_no) {
 	FILE *f;
 	char line[MAX_LINE];
-    // char target[MAX_LINE];
+    char target[MAX_LINE];
 	char *p;
 	char *a_title_id;
     char *a_region;
@@ -651,6 +660,7 @@ int Search_PSX_GAMES(std::vector<tSearchResult>& result, const char *tsv_fname, 
         }
     }
 	
+    // printf("Line %d: \n", __LINE__);
     // Title ID|Region|Name|PKG direct link|Content ID|Last Modification Date|Original Name|File Size|SHA256
 	while (fgets(line, MAX_LINE, f)) { // Process next line: the real csv data
         a_title_id = my_strtok(line, '\t');
@@ -695,18 +705,18 @@ int Search_PSX_GAMES(std::vector<tSearchResult>& result, const char *tsv_fname, 
 	}
     // printf("Line %d: \n", __LINE__);
 	fclose(f);
+    // printf("Line %d: \n", __LINE__);
 	return start_no;
 }
 
 int SearchTSV(std::vector<tSearchResult>& result, const char *tsv_fname, char **lword, unsigned int start_no) {
     if (!strcmp(tsv_fname, "db/PSV_GAMES.tsv")){
-        return Search_PSV_GAMES(result, tsv_fname, lword, start_no);
+        Search_PSV_GAMES(result, tsv_fname, lword, start_no);
     }else if (!strcmp(tsv_fname, "db/PSP_GAMES.tsv")){
-        return Search_PSP_GAMES(result, tsv_fname, lword, start_no);
+        Search_PSP_GAMES(result, tsv_fname, lword, start_no);
     }else if (!strcmp(tsv_fname, "db/PSX_GAMES.tsv")){
-        return Search_PSX_GAMES(result, tsv_fname, lword, start_no);
+        Search_PSX_GAMES(result, tsv_fname, lword, start_no);
     }
-    return start_no;
 }
 
 int SearchCSV(std::vector<tSearchResult>& result, const char *csv_fname, char **lword, unsigned int start_no) {
@@ -1228,8 +1238,9 @@ int main(int, char**)
     }
 
     // From 2.0.18: Enable native IME.
+#ifdef SDL_HINT_IME_SHOW_UI
     SDL_SetHint(SDL_HINT_IME_SHOW_UI, "1");
-    SDL_SetHint("SDL_ENABLE_SCREEN_KEYBOARD", "1");
+#endif
 
     // Create window with SDL_Renderer graphics context
     SDL_WindowFlags window_flags = (SDL_WindowFlags)(SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
@@ -1327,7 +1338,7 @@ int main(int, char**)
         // 2. Show a simple window that we create ourselves. We use a Begin/End pair to create a named window.
         {
             static bool show_app = true;
-            static char rom_name[1024] = "adventure";
+            // static char rom_name[1024] = "adventure";
             const char* systems[] = { "all", "naomi", "ps2", "psx", "n64", "snes", "nds", "3ds", "wii", "gba", "megadrive", "fbneo" };
             static int system_current = 0;
             static char query[1030] = "";
@@ -1344,7 +1355,7 @@ int main(int, char**)
 
             ImGui::Begin("Main", &show_app, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove); // Create a window and append into it.
             ImGui::Text("Query for searching rom:");            // Display some text (you can use a format strings too)
-            ImGui::InputText("Rom's Name", rom_name, IM_ARRAYSIZE(rom_name));
+            ImGui::InputText("Rom's Name", AppSetting.query, IM_ARRAYSIZE(AppSetting.query));
             ImGui::Combo("System", &system_current, systems, IM_ARRAYSIZE(systems));
             if (ImGui::Button("Search")) {
                 char fullpath[MAX_LINE], *p;
@@ -1352,9 +1363,9 @@ int main(int, char**)
                 result.clear();
                 n_found = 0;
                 if (system_current){
-                    snprintf(query, 1030, "@%s %s", systems[system_current], rom_name);
+                    snprintf(query, 1030, "@%s %s", systems[system_current], AppSetting.query);
                 }else{
-                    strcpy(query, rom_name);
+                    strcpy(query, AppSetting.query);
                 }
                 p = query;
                 while (*p){
