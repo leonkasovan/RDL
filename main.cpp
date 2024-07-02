@@ -6,14 +6,17 @@
 // 2. (done) Clipping for result
 // 3. (done) Scrape
 // 4. Build database using lua script
-// 5. DB support for nopaystation tsv 
+// 5. (done) DB support for nopaystation tsv 
 // 6. (done) Read/Write setting from imgui.ini
 // 7. (done) Filtered system for searching
-// 8. history
-// 9. last query for searching
+// 8. (done) history
+// 9. (done) last query for searching
 
 // Fix:
 // - (done) handle when scrape found none
+
+// Snippet
+// printf("Line %d: %s\n", __LINE__, line);
 
 #include "imgui.h"
 #include "imgui_impl_sdl2.h"
@@ -55,6 +58,7 @@ using json = nlohmann::json;
 #define DEFAULT_ROMS_PATH_5 "/roms2"
 #define DEFAULT_NEW_CSV_SELECTED 1
 #define DEFAULT_NEW_TSV_SELECTED 2
+#define HISTORY_FILE "history.ini"
 
 struct RDL_Setting {
     unsigned int view_result_limit;
@@ -95,6 +99,17 @@ bool isDirectoryExists(const char *path) {
 
     // Check if path is a directory
     return S_ISDIR(statbuf.st_mode);
+}
+
+std::int64_t getFileSize(const char *path){
+    std::int64_t fileSize;
+    std::ifstream inFile(path, std::ios::binary | std::ios::ate);
+    if (!inFile.is_open()) {
+        return -1;
+    }
+    fileSize = static_cast<std::int64_t>(inFile.tellg());
+    inFile.close();
+    return fileSize;
 }
 
 static void MyAppHandler_ClearAll(ImGuiContext* ctx, ImGuiSettingsHandler*){
@@ -387,15 +402,26 @@ void formatWithCommas(const char *inputNumber, char *outputNumber) {
     }
 }
 
+int writeHistory(const char *source_url, const char *target_path, const char *msg){
+    FILE *f;
+
+    f = fopen(HISTORY_FILE, "a");
+    if (!f) return 1;
+    time_t current_time = time(NULL);
+    fprintf(f, "[%s] %s", msg, ctime(&current_time));
+    fprintf(f, "Source URL: %s\n", source_url);
+    fprintf(f, "Target Path: %s (Downloaded %ld bytes)\n\n", target_path, getFileSize(target_path));
+    fclose(f);
+    return 0;
+}
+
 // Find keyword(char **) in string line
 int find_keyword3(char *line, char **lword) {
 	char **p = lword;
 	char *word, *in_line;
 	int found = 1;
 
-    // printf("Line %d: %s\n", __LINE__, line);
 	in_line = strdup(line);
-    // printf("Line %d: \n", __LINE__);
 	SDL_strlwr(in_line);	// make 'input line' lower
 	while (*p) {
 		word = *p;
@@ -407,6 +433,8 @@ int find_keyword3(char *line, char **lword) {
 			}else{
 				found = found & 1;
 			}
+        }else if (*word == '@') {
+            //skip;
 		}else{
 			if (strstr(in_line, word)) {
 				found = found & 1;
@@ -417,7 +445,6 @@ int find_keyword3(char *line, char **lword) {
 		}
 		p++;
 	}
-    // printf("Line %d: \n", __LINE__);
 	free(in_line);
 	return found;
 }
@@ -449,19 +476,19 @@ char *my_strtok(char *str, char delimiter) {
 int Search_PSV_GAMES(std::vector<tSearchResult>& result, const char *tsv_fname, char **lword, unsigned int start_no) {
 	FILE *f;
 	char line[MAX_LINE];
-    char target[MAX_LINE];
+    // char target[MAX_LINE];
 	char *category = NULL, *base_url = NULL, *p;
-	char *a_title_id;
+	// char *a_title_id;
     char *a_region;
     char *a_name;
     char *a_pkg_link;
-    char *a_zrif;
-    char *a_content_id;
-    char *a_last_update;
-    char *a_original_name;
+    // char *a_zrif;
+    // char *a_content_id;
+    // char *a_last_update;
+    // char *a_original_name;
     char *a_file_size;
-    char *a_sha256;
-    char *a_fw;
+    // char *a_sha256;
+    // char *a_fw;
     char *a_version;
     char a_desc[300];
     char formattedNumber[32];
@@ -480,30 +507,24 @@ int Search_PSV_GAMES(std::vector<tSearchResult>& result, const char *tsv_fname, 
         }
     }
 	
-    // printf("Line %d: \n", __LINE__);
     // Title ID|Region|Name|PKG direct link|zRIF|Content ID|Last Modification Date|Original Name|File Size|SHA256|Required FW|App Version
 	while (fgets(line, MAX_LINE, f)) { // Process next line: the real csv data
 		// a_name = my_strtok(line, '\t');
 		// a_title = my_strtok(NULL, '\t');
         // a_desc = my_strtok(NULL, '\t');
         // a_size = my_strtok(NULL, '\t');
-        // printf("Line %d: %s\n", __LINE__, line);
-        a_title_id = my_strtok(line, '\t');
-        // printf("Line %d: %s\n", __LINE__, a_title_id);
+        /*a_title_id = */my_strtok(line, '\t');
 		a_region = my_strtok(NULL, '\t');
-        // printf("Line %d: %s\n", __LINE__, a_region);
         a_name = my_strtok(NULL, '\t');
-        // printf("Line %d: %s\n", __LINE__, a_name);
         a_pkg_link = my_strtok(NULL, '\t');
-        a_zrif = my_strtok(NULL, '\t');
-        a_content_id = my_strtok(NULL, '\t');
-        a_last_update = my_strtok(NULL, '\t');
-        a_original_name = my_strtok(NULL, '\t');
+        /*a_zrif = */my_strtok(NULL, '\t');
+        /*a_content_id = */my_strtok(NULL, '\t');
+        /*a_last_update = */my_strtok(NULL, '\t');
+        /*a_original_name = */my_strtok(NULL, '\t');
         a_file_size = my_strtok(NULL, '\t');
-        a_sha256 = my_strtok(NULL, '\t');
-        a_fw = my_strtok(NULL, '\t');
+        /*a_sha256 = */my_strtok(NULL, '\t');
+        /*a_fw = */my_strtok(NULL, '\t');
         a_version = my_strtok(NULL, '\t');
-        // printf("Line %d: \n", __LINE__);
         
         // add to list if keyword is found in title
         if (find_keyword3(a_name, lword)) {
@@ -532,9 +553,7 @@ int Search_PSV_GAMES(std::vector<tSearchResult>& result, const char *tsv_fname, 
             }
 		}
 	}
-    // printf("Line %d: \n", __LINE__);
 	fclose(f);
-    // printf("Line %d: \n", __LINE__);
 	if (category) free(category);
 	if (base_url) free(base_url);
 	return start_no;
@@ -543,17 +562,17 @@ int Search_PSV_GAMES(std::vector<tSearchResult>& result, const char *tsv_fname, 
 int Search_PSP_GAMES(std::vector<tSearchResult>& result, const char *tsv_fname, char **lword, unsigned int start_no) {
 	FILE *f;
 	char line[MAX_LINE];
-    char target[MAX_LINE];
+    // char target[MAX_LINE];
 	char *category = NULL, *base_url = NULL, *p;
-	char *a_title_id;
+	// char *a_title_id;
     char *a_region;
     char *a_type;
     char *a_name;
     char *a_pkg_link;
-    char *a_content_id;
-    char *a_last_update;
-    char *a_rap;
-    char *a_dl_rap;
+    // char *a_content_id;
+    // char *a_last_update;
+    // char *a_rap;
+    // char *a_dl_rap;
     char *a_file_size;
     char *a_sha256;
     char a_desc[300];
@@ -575,18 +594,15 @@ int Search_PSP_GAMES(std::vector<tSearchResult>& result, const char *tsv_fname, 
 	
     // Title ID|Region|Type|Name|PKG direct link|Content ID|Last Modification Date|RAP|Download .RAP file|File Size|SHA256
 	while (fgets(line, MAX_LINE, f)) { // Process next line: the real csv data
-        a_title_id = my_strtok(line, '\t');
-        // printf("Line %d: %s\n", __LINE__, a_title_id);
+        /*a_title_id = */my_strtok(line, '\t');
 		a_region = my_strtok(NULL, '\t');
         a_type = my_strtok(NULL, '\t');
-        // printf("Line %d: %s\n", __LINE__, a_region);
         a_name = my_strtok(NULL, '\t');
-        // printf("Line %d: %s\n", __LINE__, a_name);
         a_pkg_link = my_strtok(NULL, '\t');
-        a_content_id = my_strtok(NULL, '\t');
-        a_last_update = my_strtok(NULL, '\t');
-        a_rap = my_strtok(NULL, '\t');
-        a_dl_rap = my_strtok(NULL, '\t');
+        /*a_content_id = */my_strtok(NULL, '\t');
+        /*a_last_update = */my_strtok(NULL, '\t');
+        /*a_rap = */my_strtok(NULL, '\t');
+        /*a_dl_rap = */my_strtok(NULL, '\t');
         a_file_size = my_strtok(NULL, '\t');
         a_sha256 = my_strtok(NULL, '\t');
         
@@ -621,9 +637,7 @@ int Search_PSP_GAMES(std::vector<tSearchResult>& result, const char *tsv_fname, 
                 result.emplace_back("psp", Format("%s (%s)", a_name, a_region), a_pkg_link, a_desc, a_file_size);
 		}
 	}
-    // printf("Line %d: \n", __LINE__);
 	fclose(f);
-    // printf("Line %d: \n", __LINE__);
 	if (category) free(category);
 	if (base_url) free(base_url);
 	return start_no;
@@ -632,15 +646,15 @@ int Search_PSP_GAMES(std::vector<tSearchResult>& result, const char *tsv_fname, 
 int Search_PSX_GAMES(std::vector<tSearchResult>& result, const char *tsv_fname, char **lword, unsigned int start_no) {
 	FILE *f;
 	char line[MAX_LINE];
-    char target[MAX_LINE];
+    // char target[MAX_LINE];
 	char *p;
-	char *a_title_id;
+	// char *a_title_id;
     char *a_region;
     char *a_name;
     char *a_pkg_link;
-    char *a_content_id;
-    char *a_last_update;
-    char *a_original_name;
+    // char *a_content_id;
+    // char *a_last_update;
+    // char *a_original_name;
     char *a_file_size;
     char *a_sha256;
     char a_desc[300];
@@ -660,22 +674,17 @@ int Search_PSX_GAMES(std::vector<tSearchResult>& result, const char *tsv_fname, 
         }
     }
 	
-    // printf("Line %d: \n", __LINE__);
     // Title ID|Region|Name|PKG direct link|Content ID|Last Modification Date|Original Name|File Size|SHA256
 	while (fgets(line, MAX_LINE, f)) { // Process next line: the real csv data
-        a_title_id = my_strtok(line, '\t');
-        // printf("Line %d: %s\n", __LINE__, a_title_id);
+        /*a_title_id = */my_strtok(line, '\t');
 		a_region = my_strtok(NULL, '\t');
-        // printf("Line %d: %s\n", __LINE__, a_region);
         a_name = my_strtok(NULL, '\t');
-        // printf("Line %d: %s\n", __LINE__, a_name);
         a_pkg_link = my_strtok(NULL, '\t');
-        a_content_id = my_strtok(NULL, '\t');
-        a_last_update = my_strtok(NULL, '\t');
-        a_original_name = my_strtok(NULL, '\t');
+        /*a_content_id = */my_strtok(NULL, '\t');
+        /*a_last_update = */my_strtok(NULL, '\t');
+        /*a_original_name = */my_strtok(NULL, '\t');
         a_file_size = my_strtok(NULL, '\t');
         a_sha256 = my_strtok(NULL, '\t');
-        // printf("Line %d: \n", __LINE__);
         
         // add to list if keyword is found in title
         if (find_keyword3(a_name, lword)) {
@@ -703,20 +712,19 @@ int Search_PSX_GAMES(std::vector<tSearchResult>& result, const char *tsv_fname, 
                 // printf("%s, %s (%s), %s, %s, %s\n", "psx", a_name, a_region, "a_pkg_link", a_desc, a_file_size);
 		}
 	}
-    // printf("Line %d: \n", __LINE__);
 	fclose(f);
-    // printf("Line %d: \n", __LINE__);
 	return start_no;
 }
 
 int SearchTSV(std::vector<tSearchResult>& result, const char *tsv_fname, char **lword, unsigned int start_no) {
     if (!strcmp(tsv_fname, "db/PSV_GAMES.tsv")){
-        Search_PSV_GAMES(result, tsv_fname, lword, start_no);
+        return Search_PSV_GAMES(result, tsv_fname, lword, start_no);
     }else if (!strcmp(tsv_fname, "db/PSP_GAMES.tsv")){
-        Search_PSP_GAMES(result, tsv_fname, lword, start_no);
+        return Search_PSP_GAMES(result, tsv_fname, lword, start_no);
     }else if (!strcmp(tsv_fname, "db/PSX_GAMES.tsv")){
-        Search_PSX_GAMES(result, tsv_fname, lword, start_no);
+        return Search_PSX_GAMES(result, tsv_fname, lword, start_no);
     }
+    return start_no;
 }
 
 int SearchCSV(std::vector<tSearchResult>& result, const char *csv_fname, char **lword, unsigned int start_no) {
@@ -983,19 +991,21 @@ curl_off_t urlFilesize(CURL *curl, const char *url) {
 CURLcode httpRequest(CURL* curl, const std::string& source_url,const std::string& target_path, void *ProgressCallback = NULL) {
     CURLcode res;
     std::ofstream outFile;
-    std::int64_t fileSize;
+    // std::int64_t fileSize;
 
     // printf("source_url: %s\n",source_url.c_str());
     // printf("target_path: %s\n", target_path.c_str());
 
     // Check file size
-    std::ifstream inFile(target_path, std::ios::binary | std::ios::ate);
-    if (!inFile.is_open()) {
-        fileSize = -1;
-    }else{
-        fileSize = static_cast<std::int64_t>(inFile.tellg());
-        inFile.close();
-    }
+    // std::ifstream inFile(target_path, std::ios::binary | std::ios::ate);
+    // if (!inFile.is_open()) {
+    //     fileSize = -1;
+    // }else{
+    //     fileSize = static_cast<std::int64_t>(inFile.tellg());
+    //     inFile.close();
+    // }
+
+    std::int64_t fileSize = getFileSize(target_path.c_str());
 
     if (fileSize == -1){
         // Open new file for writing
@@ -1051,8 +1061,8 @@ CURLcode httpRequest(CURL* curl, const std::string& source_url,const std::string
 void downloadThreat(const std::string& source_url,const std::string& target_path) {
     CURL* curl;
     CURLcode res;
-    std::ofstream outFile;
-    std::int64_t fileSize;
+    // std::ofstream outFile;
+    // std::int64_t fileSize;
 
     // Use httpRequest with callbak
 
@@ -1060,44 +1070,47 @@ void downloadThreat(const std::string& source_url,const std::string& target_path
     printf("target_path: %s\n", target_path.c_str());
 
     // Check file size
-    std::ifstream inFile(target_path, std::ios::binary | std::ios::ate);
-    if (!inFile.is_open()) {
-        fileSize = -1;
-    }else{
-        fileSize = static_cast<std::int64_t>(inFile.tellg());
-        inFile.close();
-    }
+    // std::ifstream inFile(target_path, std::ios::binary | std::ios::ate);
+    // if (!inFile.is_open()) {
+    //     fileSize = -1;
+    // }else{
+    //     fileSize = static_cast<std::int64_t>(inFile.tellg());
+    //     inFile.close();
+    // }
 
-    if (fileSize == -1){
-        // Open new file for writing
-        outFile.open(target_path, std::ios::binary);
-        printf("Create new target_path\n");
-    }else{
-        // Open a file for append
-        outFile.open(target_path, std::ios::binary | std::ios::app);
-        printf("Open target_path and continue from %ld\n", fileSize);
-    }
-    if (!outFile) {
-        std::cerr << "Error: Unable to open file " << target_path << std::endl;
-        {
-            std::lock_guard<std::mutex> lock(downloadMutex_1);
-            downloadDone_1 = true;
-            downloadProgress_1 = 0.0f;
-            downloadTotalSize = 0;
-            downloadedSize = 0;
-        }
-        return;
-    }
+    // if (fileSize == -1){
+    //     // Open new file for writing
+    //     outFile.open(target_path, std::ios::binary);
+    //     printf("Create new target_path\n");
+    // }else{
+    //     // Open a file for append
+    //     outFile.open(target_path, std::ios::binary | std::ios::app);
+    //     printf("Open target_path and continue from %ld\n", fileSize);
+    // }
+    // if (!outFile) {
+    //     std::cerr << "Error: Unable to open file " << target_path << std::endl;
+    //     {
+    //         std::lock_guard<std::mutex> lock(downloadMutex_1);
+    //         downloadDone_1 = true;
+    //         downloadProgress_1 = 0.0f;
+    //         downloadTotalSize = 0;
+    //         downloadedSize = 0;
+    //     }
+    //     return;
+    // }
 
     curl_global_init(CURL_GLOBAL_DEFAULT);
     curl = curl_easy_init();
     res = httpRequest(curl, source_url, target_path, (void *)ProgressCallback);
     if (res != CURLE_OK){
         std::cerr << "curl_easy_perform() failed: " << curl_easy_strerror(res) << std::endl;
+        writeHistory(source_url.c_str(), target_path.c_str(), "Failed");
+    }else{
+        writeHistory(source_url.c_str(), target_path.c_str(), "Success");
     }
     curl_easy_cleanup(curl);
     curl_global_cleanup();
-    outFile.close();
+    // outFile.close();
     {
         std::lock_guard<std::mutex> lock(downloadMutex_1);
         downloadDone_1 = true;
@@ -1238,9 +1251,10 @@ int main(int, char**)
     }
 
     // From 2.0.18: Enable native IME.
-#ifdef SDL_HINT_IME_SHOW_UI
+// #ifdef SDL_HINT_IME_SHOW_UI
     SDL_SetHint(SDL_HINT_IME_SHOW_UI, "1");
-#endif
+    SDL_SetHint("SDL_ENABLE_SCREEN_KEYBOARD", "1");
+// #endif
 
     // Create window with SDL_Renderer graphics context
     SDL_WindowFlags window_flags = (SDL_WindowFlags)(SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
@@ -1413,7 +1427,7 @@ int main(int, char**)
                         ImGui::TableNextColumn();
                         ImGui::Text("%d.[%s] %s", row+1, res_item.system.c_str(), res_item.title.c_str());
                         ImGui::TableNextColumn();
-                        ImGui::Text(res_item.desc.c_str());
+                        ImGui::Text("%s",res_item.desc.c_str());
                         ImGui::TableNextColumn();
                         ImGui::PushID(row); // Push a unique identifier for each button based on row index
                         if (ImGui::SmallButton("Get")) {
@@ -1504,9 +1518,9 @@ int main(int, char**)
                                 ImGui::SameLine();
                             }
                             if (scrapeStatus == 0) {
-                                ImGui::TextWrapped(scrapeString.c_str());
+                                ImGui::TextWrapped("%s",scrapeString.c_str());
                                 ImGui::Separator();
-                                ImGui::TextWrapped(scrapeString2.c_str());
+                                ImGui::TextWrapped("%s",scrapeString2.c_str());
                             } else if (scrapeStatus == 1) {
                                 ImGui::Text("\nScraping rom size...\nPlease wait.");
                             } else if (scrapeStatus == 2) {
@@ -1539,9 +1553,9 @@ int main(int, char**)
                     for (const auto& item : downloadQueue) {
                         ImGui::TableNextRow();
                         ImGui::TableNextColumn();
-                        ImGui::Text(item.system.c_str());
+                        ImGui::Text("%s",item.system.c_str());
                         ImGui::TableNextColumn();
-                        ImGui::Text(getFileName(decodeUrl(item.url)).c_str());
+                        ImGui::Text("%s",getFileName(decodeUrl(item.url)).c_str());
                     }
                 }
                 ImGui::EndTable();
