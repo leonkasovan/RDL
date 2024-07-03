@@ -915,7 +915,14 @@ int ProgressCallback(void* ptr, curl_off_t totalToDownload, curl_off_t nowDownlo
         downloadProgress_1 = ((float)nowDownloaded / (float)totalToDownload);
         downloadTotalSize = totalToDownload;
         downloadedSize = nowDownloaded;
+        // printf("totalToDownload=%ld\n", totalToDownload);
+    }else if (downloadTotalSize > 0){
+        std::lock_guard<std::mutex> lock(downloadMutex_1);
+        downloadProgress_1 = ((float)nowDownloaded / (float)downloadTotalSize);
+        downloadedSize = nowDownloaded;
+        // printf("totalToDownload=%ld\n", totalToDownload);
     }
+    // printf("nowDownloaded=%ld\n", nowDownloaded);
     return 0;
 }
 
@@ -1443,7 +1450,7 @@ int main(int, char**)
                                     std::lock_guard<std::mutex> lock(downloadMutex_1);
                                     downloadDone_1 = false;
                                     downloadProgress_1 = 0.0f;
-                                    downloadTotalSize = 0;
+                                    downloadTotalSize = res_item.size.length()?strtoll(res_item.size.c_str(), NULL, 10):0;
                                     downloadedSize = 0;
                                     downloadFilename = getFileName(decodeUrl(res_item.url));
                                     }
@@ -1478,7 +1485,7 @@ int main(int, char**)
                                     std::lock_guard<std::mutex> lock(downloadMutex_1);
                                     downloadDone_1 = false;
                                     downloadProgress_1 = 0.0f;
-                                    downloadTotalSize = 0;
+                                    downloadTotalSize = res_item.size.length()?strtoll(res_item.size.c_str(), NULL, 10):0;
                                     downloadedSize = 0;
                                     downloadFilename = getFileName(decodeUrl(res_item.url));
                                     }
@@ -1567,7 +1574,7 @@ int main(int, char**)
                     std::lock_guard<std::mutex> lock(downloadMutex_1);
                     downloadDone_1 = false;
                     downloadProgress_1 = 0.0f;
-                    downloadTotalSize = 0;
+                    downloadTotalSize = item.size.length()?strtoll(item.size.c_str(), NULL, 10):0;
                     downloadedSize = 0;
                     downloadQueue.pop_back();
                     }
