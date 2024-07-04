@@ -11,6 +11,7 @@
 // 7. (done) Filtered system for searching
 // 8. (done) history
 // 9. (done) last query for searching
+// 10. max retry when download failed
 
 // Fix:
 // - (done) handle when scrape found none
@@ -58,12 +59,14 @@ using json = nlohmann::json;
 #define DEFAULT_ROMS_PATH_5 "/roms2"
 #define DEFAULT_NEW_CSV_SELECTED 1
 #define DEFAULT_NEW_TSV_SELECTED 2
+#define DEFAULT_MAX_RETRY 3
 #define HISTORY_FILE "history.ini"
 
 struct RDL_Setting {
     unsigned int view_result_limit;
     char roms_path[1024];
     char query[100];
+    unsigned int max_retry;
 };
 
 struct URLSystem {
@@ -87,7 +90,7 @@ public:
 
 std::map<std::string, int> db_selected;
 
-struct RDL_Setting AppSetting = { 0, "" };
+struct RDL_Setting AppSetting = { 0, "", "", 0};
 
 bool isDirectoryExists(const char *path) {
     struct stat statbuf;
@@ -120,6 +123,7 @@ static void MyAppHandler_ApplyAll(ImGuiContext* ctx, ImGuiSettingsHandler*){
 
     // Apply default value for 1st initialization
     if (AppSetting.view_result_limit == 0) AppSetting.view_result_limit = DEFAULT_VIEW_RESULT_LIMIT;
+    if (AppSetting.max_retry == 0) AppSetting.max_retry = DEFAULT_MAX_RETRY;
     if (!AppSetting.roms_path[0]){
         if (isDirectoryExists(DEFAULT_ROMS_PATH_1))
             strcpy(AppSetting.roms_path, DEFAULT_ROMS_PATH_1);
@@ -179,6 +183,8 @@ static void MyAppHandler_ReadLine(ImGuiContext*, ImGuiSettingsHandler*, void* en
         strcpy(AppSetting.roms_path, s);
     }else if (sscanf(line, "LastQuery=%99[^\n]", s) == 1) {
         strcpy(AppSetting.query, s);
+    }else if (sscanf(line, "MaxRetry=%d", &i) == 1) {
+        AppSetting.max_retry = i;
     }else if (sscanf(line, "%255[^=]=%d", s, &i) == 2) {
         db_selected[s]=i;
     }
@@ -915,7 +921,7 @@ int ProgressCallback(void* ptr, curl_off_t totalToDownload, curl_off_t nowDownlo
         downloadProgress_1 = ((float)nowDownloaded / (float)totalToDownload);
         downloadTotalSize = totalToDownload;
         downloadedSize = nowDownloaded;
-        // printf("totalToDownload=%ld\n", totalToDownload);
+    // printf("totalToDownload=%ld\n", totalToDownload);
     }else if (downloadTotalSize > 0){
         std::lock_guard<std::mutex> lock(downloadMutex_1);
         downloadProgress_1 = ((float)nowDownloaded / (float)downloadTotalSize);
@@ -1068,56 +1074,26 @@ CURLcode httpRequest(CURL* curl, const std::string& source_url,const std::string
 void downloadThreat(const std::string& source_url,const std::string& target_path) {
     CURL* curl;
     CURLcode res;
-    // std::ofstream outFile;
-    // std::int64_t fileSize;
-
-    // Use httpRequest with callbak
+    unsigned int retry = 0;
 
     printf("source_url: %s\n",source_url.c_str());
     printf("target_path: %s\n", target_path.c_str());
 
-    // Check file size
-    // std::ifstream inFile(target_path, std::ios::binary | std::ios::ate);
-    // if (!inFile.is_open()) {
-    //     fileSize = -1;
-    // }else{
-    //     fileSize = static_cast<std::int64_t>(inFile.tellg());
-    //     inFile.close();
-    // }
-
-    // if (fileSize == -1){
-    //     // Open new file for writing
-    //     outFile.open(target_path, std::ios::binary);
-    //     printf("Create new target_path\n");
-    // }else{
-    //     // Open a file for append
-    //     outFile.open(target_path, std::ios::binary | std::ios::app);
-    //     printf("Open target_path and continue from %ld\n", fileSize);
-    // }
-    // if (!outFile) {
-    //     std::cerr << "Error: Unable to open file " << target_path << std::endl;
-    //     {
-    //         std::lock_guard<std::mutex> lock(downloadMutex_1);
-    //         downloadDone_1 = true;
-    //         downloadProgress_1 = 0.0f;
-    //         downloadTotalSize = 0;
-    //         downloadedSize = 0;
-    //     }
-    //     return;
-    // }
-
     curl_global_init(CURL_GLOBAL_DEFAULT);
     curl = curl_easy_init();
-    res = httpRequest(curl, source_url, target_path, (void *)ProgressCallback);
-    if (res != CURLE_OK){
-        std::cerr << "curl_easy_perform() failed: " << curl_easy_strerror(res) << std::endl;
-        writeHistory(source_url.c_str(), target_path.c_str(), "Failed");
-    }else{
-        writeHistory(source_url.c_str(), target_path.c_str(), "Success");
-    }
+    do {
+        res = httpRequest(curl, source_url, target_path, (void *)ProgressCallback);
+        if (res != CURLE_OK){
+            // std::cerr << "curl_easy_perform() failed: " << curl_easy_strerror(res) << std::endl;
+            writeHistory(source_url.c_str(), target_path.c_str(), curl_easy_strerror(res));
+            retry++;
+            printf("Retry %d: %s\n", retry, curl_easy_strerror(res));
+        }else{
+            writeHistory(source_url.c_str(), target_path.c_str(), "Success");
+        }
+    } while (res != CURLE_OK && retry < AppSetting.max_retry);
     curl_easy_cleanup(curl);
     curl_global_cleanup();
-    // outFile.close();
     {
         std::lock_guard<std::mutex> lock(downloadMutex_1);
         downloadDone_1 = true;
