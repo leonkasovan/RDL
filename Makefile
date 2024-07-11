@@ -90,9 +90,14 @@ $(EXE): system_scrape_id.h $(OBJS)
 db:
 	wget https://github.com/leonkasovan/RDL/releases/download/v1.0.0/db.zip
 	unzip db.zip
-	wget -P db https://nopaystation.com/tsv/PSV_GAMES.tsv
-	wget -P db https://nopaystation.com/tsv/PSP_GAMES.tsv
-	wget -P db https://nopaystation.com/tsv/PSX_GAMES.tsv
+# wget -P db https://nopaystation.com/tsv/PSV_GAMES.tsv
+# wget -P db https://nopaystation.com/tsv/PSP_GAMES.tsv
+# wget -P db https://nopaystation.com/tsv/PSX_GAMES.tsv
+# git clone https://github.com/finalburnneo/FBNeo.git
+# perl gamelist.pl FBNeo/src/burn/drv/ > db/FBNEO_GAMES.txt
 
+db.zip:
+	zip -r db.zip db/
+	
 clean:
 	rm -f $(EXE) $(OBJS)

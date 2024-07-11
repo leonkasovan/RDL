@@ -6,5 +6,6 @@
 *.json
 *.zip
 *.7z
+*.txt
 roms_downloader
 gen_system_scrape_id
