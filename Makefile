@@ -93,8 +93,15 @@ db:
 # wget -P db https://nopaystation.com/tsv/PSV_GAMES.tsv
 # wget -P db https://nopaystation.com/tsv/PSP_GAMES.tsv
 # wget -P db https://nopaystation.com/tsv/PSX_GAMES.tsv
+
+# Generate FBNeo Gamelist
 # git clone https://github.com/finalburnneo/FBNeo.git
-# perl gamelist.pl FBNeo/src/burn/drv/ > db/FBNEO_GAMES.txt
+# perl gen_fbneo_gamelist.pl FBNeo/src/burn/drv/ > db/fbneo.gamelist.txt
+
+# Generate MAME Gamelist
+# wget https://github.com/mamedev/mame/releases/download/mame0267/mame0267lx.zip
+# unzip mame0267lx.zip
+# lua5.1 gen_mame_gamelist.lua > db/mame.gamelist.txt
 
 db.zip:
 	zip -r db.zip db/

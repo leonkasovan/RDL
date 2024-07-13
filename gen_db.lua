@@ -7,6 +7,7 @@
 -- STRICT LUA SYNTAX
 ------------------------------------------------------------------------------------------------------------
 local getinfo, error, rawset, rawget = debug.getinfo, error, rawset, rawget
+local DB_PATH = "db"
 
 local mt = getmetatable(_G)
 if mt == nil then
@@ -283,7 +284,7 @@ function cylum_archive_generate_db(user_url, category)
 	end
 
 	print("Generating database "..output_fname.." ...")
-	fo = io.open(output_fname, "w")
+	fo = io.open(DB_PATH.."/"..output_fname, "w")
 	if fo == nil then
 		print('Error open a file '..output_fname)
 		return false
@@ -357,7 +358,7 @@ function general_archive_generate_db(user_url, category)
 	end
 	output_fname = output_fname:gsub("%W","_")..".csv"
 	
-	fo = io.open(output_fname, "w")
+	fo = io.open(DB_PATH.."/"..output_fname, "w")
 	if fo == nil then
 		print('Error open a file '..output_fname)
 		return false
@@ -398,28 +399,142 @@ function general_archive_generate_db(user_url, category)
 	return true
 end
 
+function general_archive_generate_db_with_dict(user_url, category)
+	local fo, output_fname, rc, headers, content, nn, list1, list2, w4
+	if user_url == "" or user_url == nil then
+		return false
+	end
+	
+	category = category or "general"
+	if user_url:match('/details/') then
+		user_url = user_url:gsub('/details/','/download/')
+		output_fname = user_url:match('download/(.-)$')
+	elseif user_url:match('/download/') then
+		output_fname = user_url:match('download/(.-)$')
+	else
+		output_fname = user_url
+		user_url = 'https://archive.org/download/'..user_url
+	end
+	list2 = cylum_load_files_xml("https://archive.org/download/"..output_fname.."/"..output_fname.."_files.xml")
+	if list2 == nil then
+		print("[ERROR] Can not find "..output_fname.."_files.xml")
+		return false
+	end
+	output_fname = output_fname:gsub("%W","_")..".csv"
+
+	-- load gamelist from dict
+	local dict = "db/"..category..".gamelist.txt"
+	print("Loading dict from "..dict)
+	list1 = {}
+	local data,header = csv.reader(dict,'|')
+	for row in data:rows() do
+		list1[row[1]] = {row[2], row[3]}
+	end
+	
+	fo = io.open(DB_PATH.."/"..output_fname, "w")
+	if fo == nil then
+		print('Error open a file '..output_fname)
+		return false
+	end
+	print("Downloading url="..user_url)
+	rc, headers, content = http.request(user_url)
+	if rc ~= 0 then
+		print("Error: "..http.error(rc), rc)
+		return false
+	end
+	
+	fo:write("#category="..category.."\n")
+	fo:write("#url="..user_url.."\n")
+	nn = 0
+	print("Extracting data...")
+	for w1,w2,w3 in content:gmatch(content_format_folder) do
+		if w1:match("%.jpg$") or w1:match("%.torrent$") or w1:match("%.xml$") or w1:match("%.sqlite$") 
+		or w3:match("%-") or w1:match("^/details/") or w2:match("parent directory")
+		then
+			print("Ignore: ", w1)
+		else
+			w2 = w2:gsub("&amp;", "&")
+			w2 = w2:gsub("%.%w+$", "")
+			w2 = w2:gsub(".-/", "")
+
+			local flist1 = list1[w2]
+			if flist1 == nil then
+					print("[WARNING] Unmapped gamelist for ", w2)
+			else
+				if flist1[1] == nil then
+					print("[WARNING] Invalid data(nil) for ", w2)
+				else
+					w2 = flist1[1]
+				end
+				if flist1[2] == nil then
+					print("[WARNING] Invalid data(nil) for ", w2)
+				else
+					w3 = w3 .. "/"..flist1[2]
+				end
+			end
+			
+			local flist2 = list2[w1]
+			if flist2 == nil then
+				print("[WARNING] Unmapped size for ", w1)
+				w4 = "--"
+			else
+				w4 = flist2[1]
+			end
+			
+			if flist1 ~= nil then
+				fo:write(w1.."|"..w2.."|"..w3.."|"..w4.."\n")
+				nn = nn + 1
+			end
+		end
+	end
+	fo:close()
+	print("Successfully process "..nn.." data")
+	return true
+end
+
 -- origin_url = "https://archive.org/download/cylums-snes-rom-collection"
 -- origin_url = "https://archive.org/details/cylums-snes-rom-collection"
 -- origin_url = "https://archive.org/download/cylums-snes-rom-collection/Cylum%27s%20SNES%20ROM%20Collection%20%2802-14-2021%29.zip/"
 
-cylum_archive_generate_db("https://archive.org/details/cylums-final-burn-neo-rom-collection", "fbneo")
-cylum_archive_generate_db("https://archive.org/details/cylums-snes-rom-collection","snes")
-cylum_archive_generate_db("https://archive.org/details/cylums-nintendo-ds-rom-collection","nds")
-cylum_archive_generate_db("https://archive.org/details/cylums-game-boy-advance-rom-collection_202102","gba")
-cylum_archive_generate_db("https://archive.org/details/cylums-sega-genesis-rom-collection","megadrive")
-cylum_archive_generate_db("https://archive.org/details/cylums-nes-rom-collection","nes")
-cylum_archive_generate_db("https://archive.org/details/cylums-neo-geo-rom-collection","neogeo")
-cylum_archive_generate_db("https://archive.org/details/cylums-playstation-rom-collection","psx")
-cylum_archive_generate_db("https://archive.org/details/cylums-playstation-rom-collection","psx")
-cylum_archive_generate_db("https://archive.org/details/cylums-turbo-grafx-cd-rom-collection","tg-cd")
+-- cylum_archive_generate_db("https://archive.org/details/cylums-final-burn-neo-rom-collection", "fbneo")
+-- cylum_archive_generate_db("https://archive.org/details/cylums-snes-rom-collection","snes")
+-- cylum_archive_generate_db("https://archive.org/details/cylums-nintendo-ds-rom-collection","nds")
+-- cylum_archive_generate_db("https://archive.org/details/cylums-game-boy-advance-rom-collection_202102","gba")
+-- cylum_archive_generate_db("https://archive.org/details/cylums-sega-genesis-rom-collection","megadrive")
+-- cylum_archive_generate_db("https://archive.org/details/cylums-nes-rom-collection","nes")
+-- cylum_archive_generate_db("https://archive.org/details/cylums-neo-geo-rom-collection","neogeo")
+-- cylum_archive_generate_db("https://archive.org/details/cylums-playstation-rom-collection","psx")
+-- cylum_archive_generate_db("https://archive.org/details/cylums-playstation-rom-collection","psx")
+-- cylum_archive_generate_db("https://archive.org/details/cylums-turbo-grafx-cd-rom-collection","tg-cd")
 
-general_archive_generate_db("https://archive.org/download/Nintendo64V2RomCollectionByGhostware","n64")
-general_archive_generate_db("https://archive.org/details/WiiWareCollectionByGhostware","wii")
-general_archive_generate_db("https://archive.org/details/SegaDreamcastPALRomCollectionByGhostware","dreamcast")
-general_archive_generate_db("https://archive.org/details/CapcomCPS2ByDataghost","cps2")
-general_archive_generate_db("https://archive.org/details/SegaSaturnRomCollectionByGhostware","saturn")
-general_archive_generate_db("https://archive.org/details/NaomiRomsReuploadByGhostware","naomi")
-general_archive_generate_db("https://archive.org/details/AtomiswaveReuploadByGhostware","atomiswave")
+-- general_archive_generate_db("https://archive.org/download/Nintendo64V2RomCollectionByGhostware","n64")
+-- general_archive_generate_db("https://archive.org/details/WiiWareCollectionByGhostware","wii")
+-- general_archive_generate_db("https://archive.org/details/SegaDreamcastPALRomCollectionByGhostware","dreamcast")
+-- general_archive_generate_db("https://archive.org/details/CapcomCPS2ByDataghost","cps2")
+-- general_archive_generate_db("https://archive.org/details/SegaSaturnRomCollectionByGhostware","saturn")
+-- general_archive_generate_db("https://archive.org/details/NaomiRomsReuploadByGhostware","naomi")
+-- general_archive_generate_db("https://archive.org/details/AtomiswaveReuploadByGhostware","atomiswave")
+-- https://archive.org/download/mame-0.221-roms-merged
+
+
+if #arg < 2 then
+    print("Usage: luaxx gen_db.lua <source_url> <target_directory>")
+    return
+end
+
+-- Validate and use the arguments
+if arg[1] and arg[2] then
+    print("Source URL: " .. arg[1])
+    print("Target Directory: " .. arg[2])
+else
+	print("Usage: luaxx gne_db.lua <source_url> <target_directory>")
+    print("Invalid arguments")
+	return
+end
+
+http.set_conf(http.OPT_TIMEOUT, 90)
+-- general_archive_generate_db(arg[1], arg[2])
+general_archive_generate_db_with_dict(arg[1], arg[2])
 
 -- function load_file(filename)
 -- 	local fi, content

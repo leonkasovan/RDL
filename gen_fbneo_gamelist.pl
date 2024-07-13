@@ -3,7 +3,7 @@
 # Generate master text database from FBNEO driver's source code
 # Usage:
 # git clone https://github.com/finalburnneo/FBNeo.git 
-# perl gamelist.pl FBNeo/src/burn/drv/ > FBNEO_GAMES.txt
+# perl gen_fbneo_gamelist.pl FBNeo/src/burn/drv/ > db/fbneo.gamelist.txt
 use strict;
 
 my $Outfile;
@@ -145,6 +145,7 @@ sub process_source_code {
 			# We only want the 1st name
 			$Drivers{$name}[2] =~ /(.*)\\0.*/;
 			$Drivers{$name}[2] = $1;
+			$Drivers{$name}[2] =~ tr/|//d;	# strip |
 
 			$desc = "$Drivers{$name}[5]/$Drivers{$name}[4]/$Drivers{$name}[6]";
 			if ($Drivers{$name}[7] ne ""){
@@ -153,6 +154,7 @@ sub process_source_code {
 			if ($Drivers{$name}[3] ne ""){
 				$desc = $desc." ".$Drivers{$name}[3];
 			}
+			$desc =~ tr/|//d; # strip |
             # print "$Drivers{$name}[1]|$Drivers{$name}[2]|$Drivers{$name}[3]|$Drivers{$name}[4]|$Drivers{$name}[5]|$Drivers{$name}[6]|$Drivers{$name}[7]|$Drivers{$name}[8]|$Drivers{$name}[9]\n";
 			print "$Drivers{$name}[1]|$Drivers{$name}[2]|$desc\n";
 		}
