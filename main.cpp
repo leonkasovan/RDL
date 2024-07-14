@@ -24,6 +24,9 @@
 #include "imgui_impl_sdlrenderer2.h"
 #include "imgui_internal.h"
 #include <stdio.h>
+#include <unistd.h>
+#include <sys/wait.h>
+#include <stdlib.h>
 #include <dirent.h>
 #include <sys/stat.h>
 #include <string>
@@ -61,6 +64,87 @@ using json = nlohmann::json;
 #define DEFAULT_NEW_TSV_SELECTED 2
 #define DEFAULT_MAX_RETRY 3
 #define HISTORY_FILE "history.ini"
+
+struct ExampleAppLog
+{
+    ImGuiTextBuffer     Buf;
+    ImVector<int>       LineOffsets; // Index to lines offset. We maintain this with AddLog() calls.
+    bool                AutoScroll;  // Keep scrolling if already at the bottom.
+
+    ExampleAppLog()
+    {
+        AutoScroll = true;
+        Clear();
+    }
+
+    void    Clear()
+    {
+        Buf.clear();
+        LineOffsets.clear();
+        LineOffsets.push_back(0);
+    }
+
+    void    AddLog(const char* fmt, ...) IM_FMTARGS(2)
+    {
+        int old_size = Buf.size();
+        va_list args;
+        va_start(args, fmt);
+        Buf.appendfv(fmt, args);
+        va_end(args);
+        for (int new_size = Buf.size(); old_size < new_size; old_size++)
+            if (Buf[old_size] == '\n')
+                LineOffsets.push_back(old_size + 1);
+    }
+
+    void    Draw(const char* title, bool* p_open = NULL)
+    {
+        if (!ImGui::Begin(title, p_open))
+        {
+            ImGui::End();
+            return;
+        }
+        ImGui::Separator();
+        if (ImGui::BeginChild("scrolling", ImVec2(0, 0), ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar))
+        {
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
+            const char* buf = Buf.begin();
+            const char* buf_end = Buf.end();
+            // The simplest and easy way to display the entire buffer:
+            //   ImGui::TextUnformatted(buf_begin, buf_end);
+            // And it'll just work. TextUnformatted() has specialization for large blob of text and will fast-forward
+            // to skip non-visible lines. Here we instead demonstrate using the clipper to only process lines that are
+            // within the visible area.
+            // If you have tens of thousands of items and their processing cost is non-negligible, coarse clipping them
+            // on your side is recommended. Using ImGuiListClipper requires
+            // - A) random access into your data
+            // - B) items all being the  same height,
+            // both of which we can handle since we have an array pointing to the beginning of each line of text.
+            // When using the filter (in the block of code above) we don't have random access into the data to display
+            // anymore, which is why we don't use the clipper. Storing or skimming through the search result would make
+            // it possible (and would be recommended if you want to search through tens of thousands of entries).
+            ImGuiListClipper clipper;
+            clipper.Begin(LineOffsets.Size);
+            while (clipper.Step())
+            {
+                for (int line_no = clipper.DisplayStart; line_no < clipper.DisplayEnd; line_no++)
+                {
+                    const char* line_start = buf + LineOffsets[line_no];
+                    const char* line_end = (line_no + 1 < LineOffsets.Size) ? (buf + LineOffsets[line_no + 1] - 1) : buf_end;
+                    ImGui::TextUnformatted(line_start, line_end);
+                }
+            }
+            clipper.End();
+            ImGui::PopStyleVar();
+
+            // Keep up at the bottom of the scroll region if we were already at the bottom at the beginning of the frame.
+            // Using a scrollbar or mouse-wheel will take away from the bottom edge.
+            if (AutoScroll && ImGui::GetScrollY() >= ImGui::GetScrollMaxY())
+                ImGui::SetScrollHereY(1.0f);
+        }
+        ImGui::EndChild();
+        ImGui::End();
+    }
+};
 
 struct RDL_Setting {
     unsigned int view_result_limit;
@@ -817,6 +901,9 @@ int SearchCSV(std::vector<tSearchResult>& result, const char *csv_fname, char **
 }
 
 // Global Variable
+std::mutex executeMutex;
+ImGuiTextBuffer executeOutput;
+
 std::mutex downloadMutex_1;
 bool downloadDone_1 = true;
 float downloadProgress_1 = 0.0f;
@@ -1070,6 +1157,23 @@ CURLcode httpRequest(CURL* curl, const std::string& source_url,const std::string
     return res;
 }
 
+// Thread function that execute command and grab the output
+void executeCommandThread(const std::string& cmd, ExampleAppLog *log){
+    printf("[debug] execute cmd: %s\n", cmd.c_str());
+    char buff[2000];
+    FILE *fp = popen(cmd.c_str(), "r");
+    if (fp == NULL) {
+        perror("popen");
+        return;
+    }
+    // Read the output a line at a time - output it.
+    while (fgets(buff, 1999, fp) != NULL) {
+        // std::lock_guard<std::mutex> lock(executeMutex);
+        log->AddLog(buff);
+    }
+    pclose(fp);
+}
+
 // Thread function that download from url and save to target_path
 void downloadThreat(const std::string& source_url,const std::string& target_path) {
     CURL* curl;
@@ -1221,6 +1325,65 @@ void scrapeThreat(const tSearchResult& res_item){
     }
 }
 
+void ShowSettingWindow(bool* p_open)
+{
+    if (!ImGui::Begin("Setting", p_open, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        ImGui::End();
+        return;
+    }
+    ImGui::Text("Dear ImGui %s (%d)", IMGUI_VERSION, IMGUI_VERSION_NUM);
+    ImGui::Separator();
+    ImGui::Text("By Omar Cornut and all Dear ImGui contributors.");
+    ImGui::Text("Dear ImGui is licensed under the MIT License, see LICENSE for more information.");
+    ImGui::Text("If your company uses this, please consider funding the project.");
+    ImGui::End();
+}
+
+void ShowHistoryWindow(bool* p_open)
+{
+    if (!ImGui::Begin("History", p_open, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        ImGui::End();
+        return;
+    }
+    ImGui::Text("Dear ImGui %s (%d)", IMGUI_VERSION, IMGUI_VERSION_NUM);
+    ImGui::Separator();
+    ImGui::Text("By Omar Cornut and all Dear ImGui contributors.");
+    ImGui::Text("Dear ImGui is licensed under the MIT License, see LICENSE for more information.");
+    ImGui::Text("If your company uses this, please consider funding the project.");
+    ImGui::End();
+}
+
+void ShowCreateDBWindow(bool* p_open)
+{
+    static ExampleAppLog log;
+    std::string cmd;
+    const char* systems[] = { "snes", "naomi", "ps2", "psx", "n64","nds", "3ds", "wii", "gba", "megadrive", "fbneo", "gc" };
+    int system_current = 11;
+    char source_url[1024];
+
+    if (!ImGui::Begin("Create DB", p_open))
+    {
+        ImGui::End();
+        return;
+    }
+    strcpy(source_url, "https://archive.org/download/GamecubeRetrobat");
+    ImGui::Text("Source URL Format:");
+    ImGui::Text("https://archive.org/details/WiiWareCollectionByGhostware\nhttps://archive.org/download/WiiWareCollectionByGhostware\nhttps://archive.org/download/cylums-snes-rom-collection/Cylum_SNES_ROM_Collection.zip/");
+    ImGui::InputText("Source URL", source_url, IM_ARRAYSIZE(source_url));
+    ImGui::Combo("System", &system_current, systems, IM_ARRAYSIZE(systems)); ImGui::SameLine();
+
+    if (ImGui::Button("Create"))
+    {
+        executeOutput.clear();
+        std::thread thread_3(executeCommandThread, Format("luaxx gen_db.lua \"%s\" \"%s\"", source_url, systems[system_current]), &log);
+        thread_3.detach();
+    }
+    ImGui::End();
+    log.Draw("Create DB", p_open);
+}
+
 // Main code
 int main(int, char**)
 {
@@ -1344,6 +1507,32 @@ int main(int, char**)
             char **lword;
             static unsigned int n_found = 0;
             static bool image_loaded = false;
+            static bool show_setting = false;
+            static bool show_history = false;
+            static bool show_create_db = false;
+           
+            if (ImGui::BeginMainMenuBar()) {
+                if (ImGui::BeginMenu("Menu")) {
+                    if (ImGui::MenuItem("Setting")) {
+                        show_setting = true;
+                    }
+                    if (ImGui::MenuItem("History")) {
+                        show_history = true;
+                    }
+                    if (ImGui::MenuItem("Create DB")) {
+                        show_create_db = true;
+                    }
+                    ImGui::EndMenu();
+                }
+                ImGui::EndMainMenuBar();
+            }
+
+            if (show_setting)
+                ShowSettingWindow(&show_setting);
+            if (show_history)
+                ShowHistoryWindow(&show_history);
+            if (show_create_db)
+                ShowCreateDBWindow(&show_create_db);
 
             static bool use_work_area = true;
             const ImGuiViewport* viewport = ImGui::GetMainViewport();

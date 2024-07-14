@@ -533,8 +533,8 @@ else
 end
 
 http.set_conf(http.OPT_TIMEOUT, 90)
--- general_archive_generate_db(arg[1], arg[2])
-general_archive_generate_db_with_dict(arg[1], arg[2])
+general_archive_generate_db(arg[1], arg[2])
+-- general_archive_generate_db_with_dict(arg[1], arg[2])
 
 -- function load_file(filename)
 -- 	local fi, content
